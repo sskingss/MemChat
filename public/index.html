@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MemChat - 后端验证界面</title>
+    <title>MemChat - Backend Testing UI</title>
     <style>
         * {
             margin: 0;
@@ -238,32 +238,32 @@
 </head>
 <body>
     <div class="container">
-        <h1>MemChat - 后端验证界面</h1>
+        <h1>MemChat - Backend Testing UI</h1>
 
-        <!-- 认证模块 -->
+        <!-- Authentication Section -->
         <div class="section">
-            <h2>🔐 认证</h2>
+            <h2>🔐 Authentication</h2>
             <div id="auth-section">
                 <div class="form-group">
-                    <label>用户名</label>
-                    <input type="text" id="username" placeholder="输入用户名" value="testuser">
+                    <label>Username</label>
+                    <input type="text" id="username" placeholder="Enter username" value="testuser">
                 </div>
                 <div class="btn-group">
-                    <button onclick="register()">注册</button>
-                    <button class="secondary" onclick="login()">登录</button>
+                    <button onclick="register()">Register</button>
+                    <button class="secondary" onclick="login()">Login</button>
                 </div>
                 <div id="auth-status"></div>
             </div>
             <div id="user-info" class="user-info hidden">
-                <span>当前用户: <strong id="current-username"></strong></span>
-                <span class="badge">已登录</span>
-                <button class="secondary" onclick="logout()">退出</button>
+                <span>Current user: <strong id="current-username"></strong></span>
+                <span class="badge">Logged In</span>
+                <button class="secondary" onclick="logout()">Logout</button>
             </div>
         </div>
 
-        <!-- 对话模块 -->
+        <!-- Chat Section -->
         <div class="section">
-            <h2>💬 对话</h2>
+            <h2>💬 Chat</h2>
             <div id="chat-section" class="hidden">
                 <div class="form-group">
                     <label>Workspace ID</label>
@@ -272,34 +272,34 @@
                 <div class="chat-box" id="chat-messages">
                     <div class="message assistant">
                         <div class="sender">Assistant</div>
-                        <div class="content">你好！我是你的 AI 助手，有什么可以帮助你的吗？</div>
+                        <div class="content">Hello! I'm your AI assistant. How can I help you?</div>
                     </div>
                 </div>
                 <div class="form-group">
-                    <textarea id="chat-input" placeholder="输入你的消息..." onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
+                    <textarea id="chat-input" placeholder="Type your message..." onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
                 </div>
-                <button onclick="sendMessage()" id="send-btn">发送</button>
+                <button onclick="sendMessage()" id="send-btn">Send</button>
                 <div id="chat-status"></div>
             </div>
             <div id="chat-prompt" class="status info">
-                请先登录后再使用对话功能
+                Please login first to use chat feature
             </div>
         </div>
 
-        <!-- 记忆管理模块 -->
+        <!-- Memory Management Section -->
         <div class="section">
-            <h2>🧠 记忆管理</h2>
+            <h2>🧠 Memory Management</h2>
             <div id="memory-section" class="hidden">
                 <div class="form-group">
                     <label>Workspace ID</label>
                     <input type="text" id="memory-workspace-id" placeholder="workspace_001" value="workspace_001">
                 </div>
-                <button onclick="loadMemories()">加载记忆</button>
+                <button onclick="loadMemories()">Load Memories</button>
                 <div id="memory-status"></div>
                 <div class="memories-list" id="memories-list"></div>
             </div>
             <div id="memory-prompt" class="status info">
-                请先登录后再查看记忆
+                Please login first to view memories
             </div>
         </div>
     </div>
@@ -309,16 +309,16 @@
         let currentToken = localStorage.getItem('token') || '';
         let currentUsername = localStorage.getItem('username') || '';
 
-        // 初始化
+        // Initialize
         if (currentToken && currentUsername) {
             showLoggedInState();
         }
 
-        // 认证相关
+        // Authentication
         async function register() {
             const username = document.getElementById('username').value.trim();
             if (!username) {
-                showStatus('auth-status', 'error', '请输入用户名');
+                showStatus('auth-status', 'error', 'Please enter a username');
                 return;
             }
 
@@ -331,19 +331,19 @@
                 const data = await res.json();
                 if (res.ok) {
                     saveAuth(data);
-                    showStatus('auth-status', 'success', `注册成功！用户ID: ${data.userId}`);
+                    showStatus('auth-status', 'success', `Registration successful! User ID: ${data.userId}`);
                 } else {
-                    showStatus('auth-status', 'error', data.message || '注册失败');
+                    showStatus('auth-status', 'error', data.message || 'Registration failed');
                 }
             } catch (err) {
-                showStatus('auth-status', 'error', `错误: ${err.message}`);
+                showStatus('auth-status', 'error', `Error: ${err.message}`);
             }
         }
 
         async function login() {
             const username = document.getElementById('username').value.trim();
             if (!username) {
-                showStatus('auth-status', 'error', '请输入用户名');
+                showStatus('auth-status', 'error', 'Please enter a username');
                 return;
             }
 
@@ -356,12 +356,12 @@
                 const data = await res.json();
                 if (res.ok) {
                     saveAuth(data);
-                    showStatus('auth-status', 'success', `登录成功！用户ID: ${data.userId}`);
+                    showStatus('auth-status', 'success', `Login successful! User ID: ${data.userId}`);
                 } else {
-                    showStatus('auth-status', 'error', data.message || '登录失败');
+                    showStatus('auth-status', 'error', data.message || 'Login failed');
                 }
             } catch (err) {
-                showStatus('auth-status', 'error', `错误: ${err.message}`);
+                showStatus('auth-status', 'error', `Error: ${err.message}`);
             }
         }
 
@@ -400,20 +400,20 @@
             document.getElementById('memory-prompt').classList.remove('hidden');
         }
 
-        // 对话相关
+        // Chat
         async function sendMessage() {
             const message = document.getElementById('chat-input').value.trim();
             const workspaceId = document.getElementById('workspace-id').value.trim();
 
             if (!message || !workspaceId) {
-                showStatus('chat-status', 'error', '请输入消息和 Workspace ID');
+                showStatus('chat-status', 'error', 'Please enter a message and Workspace ID');
                 return;
             }
 
             const sendBtn = document.getElementById('send-btn');
             sendBtn.disabled = true;
 
-            // 添加用户消息
+            // Append user message
             appendMessage('user', message);
             document.getElementById('chat-input').value = '';
 
@@ -430,12 +430,12 @@
                 if (res.ok) {
                     appendMessage('assistant', data.response);
                     showStatus('chat-status', 'success',
-                        `回复成功 | 使用记忆: ${data.memoriesUsed} | 存储记忆: ${data.memoriesStored}`);
+                        `Response received | Memories used: ${data.memoriesUsed} | Memories stored: ${data.memoriesStored}`);
                 } else {
-                    showStatus('chat-status', 'error', data.message || '对话失败');
+                    showStatus('chat-status', 'error', data.message || 'Chat failed');
                 }
             } catch (err) {
-                showStatus('chat-status', 'error', `错误: ${err.message}`);
+                showStatus('chat-status', 'error', `Error: ${err.message}`);
             } finally {
                 sendBtn.disabled = false;
             }
@@ -453,16 +453,16 @@
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
-        // 记忆相关
+        // Memory
         async function loadMemories() {
             const workspaceId = document.getElementById('memory-workspace-id').value.trim();
 
             if (!workspaceId) {
-                showStatus('memory-status', 'error', '请输入 Workspace ID');
+                showStatus('memory-status', 'error', 'Please enter a Workspace ID');
                 return;
             }
 
-            showStatus('memory-status', 'info', '加载中...');
+            showStatus('memory-status', 'info', 'Loading...');
 
             try {
                 const res = await fetch(`${API_BASE}/api/memories?workspaceId=${encodeURIComponent(workspaceId)}`, {
@@ -471,17 +471,17 @@
                 const data = await res.json();
                 if (res.ok) {
                     renderMemories(data.memories || []);
-                    showStatus('memory-status', 'success', `加载成功，共 ${data.count} 条记忆`);
+                    showStatus('memory-status', 'success', `Loaded successfully, ${data.count} memories found`);
                 } else {
-                    showStatus('memory-status', 'error', data.message || '加载失败');
+                    showStatus('memory-status', 'error', data.message || 'Load failed');
                 }
             } catch (err) {
-                showStatus('memory-status', 'error', `错误: ${err.message}`);
+                showStatus('memory-status', 'error', `Error: ${err.message}`);
             }
         }
 
         async function updateMemory(id, oldContent) {
-            const newContent = prompt('更新记忆内容:', oldContent);
+            const newContent = prompt('Update memory content:', oldContent);
             if (newContent === null || newContent.trim() === '') return;
 
             try {
@@ -495,18 +495,18 @@
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    alert('更新成功');
-                    loadMemories(); // 重新加载
+                    alert('Update successful');
+                    loadMemories(); // Reload
                 } else {
-                    alert(`更新失败: ${data.message}`);
+                    alert(`Update failed: ${data.message}`);
                 }
             } catch (err) {
-                alert(`错误: ${err.message}`);
+                alert(`Error: ${err.message}`);
             }
         }
 
         async function deleteMemory(id) {
-            if (!confirm('确定要删除这条记忆吗？')) return;
+            if (!confirm('Are you sure you want to delete this memory?')) return;
 
             try {
                 const res = await fetch(`${API_BASE}/api/memories/${id}`, {
@@ -515,20 +515,20 @@
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    alert('删除成功');
-                    loadMemories(); // 重新加载
+                    alert('Delete successful');
+                    loadMemories(); // Reload
                 } else {
-                    alert(`删除失败: ${data.message}`);
+                    alert(`Delete failed: ${data.message}`);
                 }
             } catch (err) {
-                alert(`错误: ${err.message}`);
+                alert(`Error: ${err.message}`);
             }
         }
 
         function renderMemories(memories) {
             const list = document.getElementById('memories-list');
             if (memories.length === 0) {
-                list.innerHTML = '<div class="status info">暂无记忆</div>';
+                list.innerHTML = '<div class="status info">No memories found</div>';
                 return;
             }
             list.innerHTML = memories.map(m => `
@@ -536,19 +536,19 @@
                     <div class="memory-item-header">
                         <span class="memory-id">ID: ${escapeHtml(m.id?.substring(0, 20) || '')}...</span>
                         <div class="memory-actions">
-                            <button onclick="updateMemory('${escapeHtml(m.id)}', '${escapeHtml(m.content).replace(/'/g, "\\'")}')">编辑</button>
-                            <button class="danger" onclick="deleteMemory('${escapeHtml(m.id)}')">删除</button>
+                            <button onclick="updateMemory('${escapeHtml(m.id)}', '${escapeHtml(m.content).replace(/'/g, "\\'")}')">Edit</button>
+                            <button class="danger" onclick="deleteMemory('${escapeHtml(m.id)}')">Delete</button>
                         </div>
                     </div>
                     <div class="memory-content">${escapeHtml(m.content)}</div>
                     <div style="margin-top:8px;font-size:12px;color:#9ca3af;">
-                        距离: ${m.score ? m.score.toFixed(4) : 'N/A'}
+                        Score: ${m.score ? m.score.toFixed(4) : 'N/A'}
                     </div>
                 </div>
             `).join('');
         }
 
-        // 工具函数
+        // Utility functions
         function showStatus(elementId, type, message) {
             const el = document.getElementById(elementId);
             el.className = `status ${type}`;

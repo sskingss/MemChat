@@ -1,237 +1,435 @@
-# Multi-Assistant AI Backend
+<div align="center">
 
-A multi-tenant AI backend service built with Express + TypeScript, featuring strict user data isolation and an AI memory system.
+# 🧠 MemChat
 
-## Core Features
+**Production-Ready Multi-Tenant AI Memory System**
 
-### 1. Strict Multi-Tenant Data Isolation
+A secure, scalable backend for building AI applications with persistent memory and strict user data isolation.
 
-**Dual Isolation Mechanism:**
-- **Layer 1: JWT Authentication Middleware**
-  - All `/api/*` requests must carry a valid JWT token
-  - Extracts `user_id` from token and attaches to `req.user.userId`
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![Express](https://img.shields.io/badge/Express-4.21-green?logo=express)](https://expressjs.com/)
+[![Milvus](https://img.shields.io/badge/Milvus-2.4-orange?logo=milvus)](https://milvus.io/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-- **Layer 2: Milvus Data Layer Enforcement**
-  - `user_id` is set as **Partition Key** in Collection Schema
-  - All CRUD methods require `user_id` parameter
-  - Queries enforce `user_id == "{userId}"` filter condition
+[Quick Start](#-quick-start) · [Features](#-features) · [Architecture](#-architecture) · [API Docs](#-api-endpoints)
 
-**Security Guarantee:** Even if malicious requests bypass the authentication layer, data layer access is still prevented.
+</div>
 
-### 2. AI Memory System
+---
 
-- **Intelligent Memory Storage**: Uses LLM to evaluate conversation importance, avoiding database bloat
-- **Vector Retrieval (RAG)**: Retrieves relevant historical memories based on semantic similarity
-- **Workspace Isolation**: Same user can maintain independent memories across different workspaces
+## 🎯 Why MemChat?
 
-## Project Structure
+
+Building AI apps with memory is hard. Building **multi-tenant** AI apps with memory is harder.
+
+**Common challenges:**
+
+- ❌ Data isolation between users is complex and error-prone
+- ❌ Vector databases grow indefinitely, storing irrelevant conversations
+- ❌ RAG systems need memory, but how do you manage it?
+- ❌ Security vulnerabilities from improper tenant isolation
+
+**MemChat solves all of these out of the box:**
+
+- ✅ **Dual-layer isolation** - JWT + database-level enforcement
+- ✅ **Smart memory** - LLM evaluates what's worth remembering
+- ✅ **RAG-ready** - Semantic search over conversation history
+- ✅ **Production-grade** - TypeScript, error handling, Docker-ready
+
+---
+
+## 🎬 Demo
+
+<div align="center">
+
+![MemChat Demo](./image/README/demo.gif)
+
+**Your AI assistant that truly remembers**
+
+</div>
+
+### ✨ Persistent Memory Across Sessions
+
+The core power of MemChat: **No matter where or when you restart a conversation, your AI assistant remembers.**
+
+**Real-world scenario:**
 
 ```
-src/
-├── config/              # Configuration files
-├── middlewares/         # JWT authentication middleware
-├── services/            # Core service layer
-│   ├── milvus.service.ts    # Milvus wrapper (core isolation logic)
-│   ├── embedding.service.ts # Vectorization service
-│   ├── llm.service.ts       # LLM call wrapper
-│   └── memory.service.ts    # Memory management
-├── controllers/         # Controllers
-├── routes/              # Routes
-├── types/               # TypeScript type definitions
-└── utils/               # Utility functions
+📝 Day 1, Workspace "work":
+User: "I prefer using TypeScript for backend development"
+AI:  "Got it! I'll remember you prefer TypeScript..."
+
+📝 Day 3, Workspace "work" (new session):
+User: "What language should I use for my new API project?"
+AI:  "Based on your preference for TypeScript, I'd recommend..."
+     ↑ Automatically retrieved from memory!
+
+📝 Day 7, Workspace "personal" (different context):
+User: "Suggest a backend stack for my side project"
+AI:  "Since you prefer TypeScript, consider Express or NestJS..."
+     ↑ Same user, different workspace, still remembers!
 ```
 
-## Quick Start
+**Key capabilities:**
 
-### 1. Start Milvus
+- 🔄 **Cross-session persistence** - Memories survive server restarts
+- 🎯 **Contextual retrieval** - Relevant memories fetched automatically via semantic search
+- 🏢 **Multi-workspace support** - Separate contexts for work, personal, projects, etc.
+- 👤 **User isolation** - Each user's memories are completely private
+
+---
+
+## 🚀 Features
+
+### 🔐 Enterprise-Grade Multi-Tenancy
+
+**Two-layer isolation guarantee:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Layer 1: JWT Authentication Middleware                 │
+│  - Extracts user_id from token                          │
+│  - Rejects unauthenticated requests                     │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│  Layer 2: Milvus Partition Key Enforcement              │
+│  - user_id is Partition Key                             │
+│  - All queries filtered by user_id                      │
+│  - Impossible to access another user's data             │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Security guarantee:** Even if auth middleware is bypassed, data layer prevents unauthorized access.
+
+### 🧠 Intelligent Memory System
+
+```
+User Message ──► LLM evaluates importance ──► Store if valuable
+                      │
+                      ▼
+              "User prefers dark mode"
+              "User works at TikTok"
+              "User likes Chinese food"
+                      │
+                      ▼
+              Stored in Milvus with embeddings
+                      │
+                      ▼
+              Retrieved in future conversations (RAG)
+```
+
+- **Automatic evaluation** - LLM decides what's worth remembering
+- **Semantic retrieval** - Find relevant memories by meaning, not keywords
+- **Workspace isolation** - Same user, different contexts (work/personal/etc.)
+
+### 🎯 Developer Experience
 
 ```bash
+# 1. Start infrastructure
 docker-compose up -d
+
+# 2. Install & run
+npm install && npm run dev
+
+# 3. Open browser
+open http://localhost:3000  # Interactive testing UI included!
 ```
 
-Wait for Milvus to be ready (approximately 30-60 seconds).
+---
 
-### 2. Install Dependencies
+## 🏗️ Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         Client / Frontend                         │
+└──────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                      Express.js Server                            │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐     │
+│  │ Auth Middleware│  │  Controllers   │  │    Routes      │     │
+│  │   (JWT Verify) │  │  (Business)    │  │   (Endpoints)  │     │
+│  └────────────────┘  └────────────────┘  └────────────────┘     │
+└──────────────────────────────────────────────────────────────────┘
+                                │
+          ┌─────────────────────┼─────────────────────┐
+          ▼                     ▼                     ▼
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│   LLM Service    │  │ Memory Service   │  │ Embedding Service│
+│  (OpenAI API)    │  │  (Memory Mgmt)   │  │  (Local Model)   │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
+                                │
+                                ▼
+                    ┌──────────────────┐
+                    │     Milvus       │
+                    │  (Vector Store)  │
+                    └──────────────────┘
+```
+
+---
+
+## 📦 Quick Start
+
+### Prerequisites
+
+- Node.js 18+
+- Docker & Docker Compose
+- OpenAI API key (or compatible endpoint)
+
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/your-username/memchat.git
+cd memchat
+
+# Start Milvus (vector database)
+docker-compose up -d
+
+# Install dependencies
 npm install
-```
 
-### 3. Configure Environment Variables
-
-Copy `.env.example` to `.env` and fill in API keys:
-
-```bash
+# Configure environment
 cp .env.example .env
-```
+# Edit .env with your API keys
 
-Edit `.env`:
-- `LLM_BASE_URL`: Private model service URL (e.g., `http://localhost:8000/v1`)
-- `LLM_MODEL`: LLM model name (e.g., `gpt-4`)
-- `LLM_EMBEDDING_MODEL`: Embedding model name (e.g., `text-embedding-ada-002`)
-- `LLM_API_KEY`: Required if private model needs authentication
-- `JWT_SECRET`: Change this for production
-
-### 4. Start Server
-
-```bash
+# Start development server
 npm run dev
 ```
 
-Server will start at `http://localhost:3000`.
+Visit `http://localhost:3000` for the interactive testing UI.
 
-## API Endpoints
+### Environment Variables
 
-### 1. POST /api/auth/register - User Registration
+```env
+# Server
+PORT=3000
+NODE_ENV=development
 
-**Request Body:**
-```json
-{
-  "username": "testuser"
-}
+# JWT
+JWT_SECRET=your-super-secret-key
+
+# Milvus
+MILVUS_ADDRESS=localhost:19530
+
+# LLM (OpenAI compatible)
+LLM_API_KEY=your-api-key
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4
+LLM_EMBEDDING_MODEL=text-embedding-ada-002
+```
+
+---
+
+## 📖 API Endpoints
+
+### Authentication
+
+<details>
+<summary><code>POST /api/auth/register</code> - Register User</summary>
+
+```bash
+curl -X POST http://localhost:3000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice"}'
 ```
 
 **Response:**
+
 ```json
 {
-  "userId": "uuid-123",
-  "username": "testuser",
-  "token": "jwt-token-here"
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "username": "alice",
+  "token": "eyJhbGciOiJIUzI1NiIs..."
 }
 ```
 
-### 2. POST /api/auth/login - User Login
+</details>
 
-**Request Body:**
-```json
-{
-  "username": "testuser"
-}
+<details>
+<summary><code>POST /api/auth/login</code> - Login</summary>
+
+```bash
+curl -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice"}'
+```
+
+</details>
+
+### Chat
+
+<details>
+<summary><code>POST /api/chat</code> - Send Message</summary>
+
+```bash
+curl -X POST http://localhost:3000/api/chat \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspaceId": "work-project",
+    "message": "I prefer TypeScript for backend development"
+  }'
 ```
 
 **Response:**
+
 ```json
 {
-  "userId": "uuid-123",
-  "username": "testuser",
-  "token": "jwt-token-here"
-}
-```
-
-### 3. POST /api/chat - Core Chat Endpoint
-
-**Headers:**
-```
-Authorization: Bearer {token}
-```
-
-**Request Body:**
-```json
-{
-  "workspaceId": "my-workspace-123",
-  "message": "Help me write a RESTful API"
-}
-```
-
-**Response:**
-```json
-{
-  "response": "I can help you design a RESTful API...",
-  "memoriesUsed": 3,
+  "response": "I'll remember that you prefer TypeScript...",
+  "memoriesUsed": 2,
   "memoriesStored": 1
 }
 ```
 
 **Flow:**
-1. Retrieve historical memories with `user_id` and `workspace_id` (RAG)
-2. Assemble prompt and call LLM
-3. Asynchronously evaluate information importance, store in Milvus if worthwhile
 
-### 4. GET /api/memories - Get Memory List
+1. Retrieves relevant memories using vector search
+2. Builds context-aware prompt
+3. Calls LLM for response
+4. Evaluates if message is worth remembering
+5. Stores valuable information in Milvus
 
-**Headers:**
+</details>
+
+### Memory Management
+
+<details>
+<summary><code>GET /api/memories?workspaceId=xxx</code> - List Memories</summary>
+
+```bash
+curl "http://localhost:3000/api/memories?workspaceId=work-project" \
+  -H "Authorization: Bearer YOUR_TOKEN"
 ```
-Authorization: Bearer {token}
-```
-
-**Query Parameters:**
-- `workspaceId`: Workspace ID
 
 **Response:**
+
 ```json
 {
-  "count": 5,
+  "count": 3,
   "memories": [
     {
-      "id": "uuid-123",
-      "userId": "user-abc",
-      "workspaceId": "workspace-123",
-      "content": "User prefers Node.js for backend development",
-      "score": 0
+      "id": "memory-uuid",
+      "content": "User prefers TypeScript for backend",
+      "score": 0.85
     }
   ]
 }
 ```
 
-### 5. PUT /api/memories/:id - Update Memory
+</details>
 
-**Headers:**
-```
-Authorization: Bearer {token}
-```
+<details>
+<summary><code>PUT /api/memories/:id</code> - Update Memory</summary>
 
-**Request Body:**
-```json
-{
-  "content": "Updated memory content"
-}
+```bash
+curl -X PUT http://localhost:3000/api/memories/memory-uuid \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Updated content"}'
 ```
 
-**Security:** Only allows updating own memories (owner validation).
+</details>
 
-### 6. DELETE /api/memories/:id - Delete Memory
+<details>
+<summary><code>DELETE /api/memories/:id</code> - Delete Memory</summary>
 
-**Headers:**
+```bash
+curl -X DELETE http://localhost:3000/api/memories/memory-uuid \
+  -H "Authorization: Bearer YOUR_TOKEN"
 ```
-Authorization: Bearer {token}
+
+</details>
+
+---
+
+## 🛠️ Tech Stack
+
+| Component            | Technology                   |
+| -------------------- | ---------------------------- |
+| **Runtime**    | Node.js + TypeScript         |
+| **Framework**  | Express.js                   |
+| **Vector DB**  | Milvus 2.4                   |
+| **Embeddings** | @xenova/transformers (local) |
+| **LLM**        | OpenAI API (or compatible)   |
+| **Auth**       | JWT                          |
+| **Container**  | Docker Compose               |
+
+---
+
+## 📁 Project Structure
+
+```
+src/
+├── config/           # Configuration management
+├── middlewares/      # JWT authentication
+├── services/
+│   ├── milvus.service.ts      # Vector DB operations
+│   ├── embedding.service.ts   # Text embeddings
+│   ├── llm.service.ts         # LLM integration
+│   └── memory.service.ts      # Memory logic
+├── controllers/      # Request handlers
+├── routes/           # API routes
+├── types/            # TypeScript definitions
+└── utils/            # Helpers
 ```
 
-**Security:** Only allows deleting own memories (owner validation).
+---
 
-## Frontend Testing Page
+## 🔒 Security Best Practices
 
-A frontend testing page is available at `http://localhost:3000/` after starting the server. It provides:
+1. **Never trust client input** - All user_id from JWT, not request body
+2. **Defense in depth** - Auth middleware + database partition key
+3. **No plaintext secrets** - Environment variables only
+4. **Input validation** - Type checking on all endpoints
 
-- User registration and login
-- Chat interface with AI
-- Memory management (view, edit, delete)
+---
 
-## Tech Stack
+## 🗺️ Roadmap
 
-- **Node.js + Express + TypeScript**
-- **Milvus**: Vector database (using `@zilliz/milvus2-sdk-node`)
-- **JWT**: Authentication
-- **OpenAI Compatible API**: LLM calls and embeddings
+- [ ] Streaming responses (SSE)
+- [ ] Memory expiration policies
+- [ ] Multi-modal memory (images, files)
+- [ ] Memory summarization for long conversations
+- [ ] Admin dashboard
+- [ ] Rate limiting
+- [ ] Redis caching layer
 
-## Core Isolation Strategy
+---
 
-See code comments for details. Key files to review:
+## 🤝 Contributing
 
-1. `src/middlewares/auth.middleware.ts` - First line of defense
-2. `src/services/milvus.service.ts` - Core isolation logic (all methods require `userId`)
-3. `src/controllers/*.ts` - How to correctly use `req.user.userId`
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details.
 
-## Error Handling
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-All service layers have comprehensive try-catch:
-- Milvus connection failure
-- LLM call failure
-- Embedding generation failure
+---
 
-Errors return unified format:
-```json
-{
-  "error": "Internal Server Error",
-  "message": "Detailed error message"
-}
-```
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- [Milvus](https://milvus.io/) - High-performance vector database
+- [Transformers.js](https://huggingface.co/docs/transformers.js) - Local embeddings
+- [OpenAI](https://openai.com/) - LLM capabilities
+
+---
+
+<div align="center">
+
+**⭐ If this project helped you, please give it a star! ⭐**
+
+[Report Bug](https://github.com/your-username/memchat/issues) · [Request Feature](https://github.com/your-username/memchat/issues)
+
+</div>

@@ -1,13 +1,39 @@
 {
-  "name": "multi-assistant",
+  "name": "memchat",
   "version": "1.0.0",
-  "description": "多租户 AI 后端服务 - 基于用户隔离的 AI 记忆系统",
+  "description": "Production-Ready Multi-Tenant AI Memory System - A secure, scalable backend for building AI applications with persistent memory",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write src/**/*.ts"
   },
+  "keywords": [
+    "ai",
+    "memory",
+    "multi-tenant",
+    "rag",
+    "vector-database",
+    "milvus",
+    "openai",
+    "chatgpt",
+    "llm",
+    "embeddings",
+    "typescript",
+    "express"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/memchat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/memchat/issues"
+  },
+  "homepage": "https://github.com/your-username/memchat#readme",
   "dependencies": {
     "@xenova/transformers": "^2.17.2",
     "@zilliz/milvus2-sdk-node": "^2.4.9",
