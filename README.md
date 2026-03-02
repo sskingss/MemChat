@@ -1,117 +1,163 @@
 # Multi-Assistant AI Backend
 
-基于 Express + TypeScript 的多租户 AI 后端服务，实现严格的用户数据隔离和 AI 记忆系统。
+A multi-tenant AI backend service built with Express + TypeScript, featuring strict user data isolation and an AI memory system.
 
-## 核心特性
+## Core Features
 
-### 1. 严格的多租户数据隔离
+### 1. Strict Multi-Tenant Data Isolation
 
-**双重隔离机制：**
-- **第一层：JWT 鉴权中间件**
-  - 所有 `/api/*` 请求必须携带有效 JWT token
-  - 从 token 提取 `user_id` 并挂载到 `req.user.userId`
+**Dual Isolation Mechanism:**
+- **Layer 1: JWT Authentication Middleware**
+  - All `/api/*` requests must carry a valid JWT token
+  - Extracts `user_id` from token and attaches to `req.user.userId`
 
-- **第二层：Milvus 数据层强制校验**
-  - Collection Schema 中 `user_id` 设为 **Partition Key**
-  - 所有 CRUD 方法强制接收 `user_id` 参数
-  - 查询时强制拼接 `user_id == "{userId}"` 过滤条件
+- **Layer 2: Milvus Data Layer Enforcement**
+  - `user_id` is set as **Partition Key** in Collection Schema
+  - All CRUD methods require `user_id` parameter
+  - Queries enforce `user_id == "{userId}"` filter condition
 
-**安全保证：** 即使恶意请求绕过鉴权层，数据层仍然无法越权访问。
+**Security Guarantee:** Even if malicious requests bypass the authentication layer, data layer access is still prevented.
 
-### 2. AI 记忆系统
+### 2. AI Memory System
 
-- **智能记忆存储**：使用 LLM 判断对话信息重要性，避免数据库膨胀
-- **向量检索 (RAG)**：基于语义相似度检索相关历史记忆
-- **Workspace 隔离**：同一用户可在不同 workspace 下维护独立记忆
+- **Intelligent Memory Storage**: Uses LLM to evaluate conversation importance, avoiding database bloat
+- **Vector Retrieval (RAG)**: Retrieves relevant historical memories based on semantic similarity
+- **Workspace Isolation**: Same user can maintain independent memories across different workspaces
 
-## 项目结构
+## Project Structure
 
 ```
 src/
-├── config/              # 配置文件
-├── middlewares/         # JWT 鉴权中间件
-├── services/            # 核心服务层
-│   ├── milvus.service.ts    # Milvus 封装（核心隔离逻辑）
-│   ├── embedding.service.ts # 向量化服务
-│   ├── llm.service.ts       # LLM 调用封装
-│   └── memory.service.ts    # 记忆管理
-├── controllers/         # 控制器层
-├── routes/              # 路由层
-├── types/               # TypeScript 类型定义
-└── utils/               # 工具函数
+├── config/              # Configuration files
+├── middlewares/         # JWT authentication middleware
+├── services/            # Core service layer
+│   ├── milvus.service.ts    # Milvus wrapper (core isolation logic)
+│   ├── embedding.service.ts # Vectorization service
+│   ├── llm.service.ts       # LLM call wrapper
+│   └── memory.service.ts    # Memory management
+├── controllers/         # Controllers
+├── routes/              # Routes
+├── types/               # TypeScript type definitions
+└── utils/               # Utility functions
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 启动 Milvus
+### 1. Start Milvus
 
 ```bash
 docker-compose up -d
 ```
 
-等待 Milvus 启动完成（大约 30-60 秒）。
+Wait for Milvus to be ready (approximately 30-60 seconds).
 
-### 2. 安装依赖
+### 2. Install Dependencies
 
 ```bash
 npm install
 ```
 
-### 3. 配置环境变量
+### 3. Configure Environment Variables
 
-复制 `.env.example` 为 `.env` 并填写 API keys：
+Copy `.env.example` to `.env` and fill in API keys:
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env`：
-- `LLM_BASE_URL`: 私有模型服务地址（如 `http://localhost:8000/v1`）
-- `LLM_MODEL`: LLM 模型名称（如 `gpt-4`）
-- `LLM_EMBEDDING_MODEL`: Embedding 模型名称（如 `text-embedding-ada-002`）
-- `LLM_API_KEY`: 如果私有模型需要认证则填写
-- `JWT_SECRET`: 生产环境请修改
+Edit `.env`:
+- `LLM_BASE_URL`: Private model service URL (e.g., `http://localhost:8000/v1`)
+- `LLM_MODEL`: LLM model name (e.g., `gpt-4`)
+- `LLM_EMBEDDING_MODEL`: Embedding model name (e.g., `text-embedding-ada-002`)
+- `LLM_API_KEY`: Required if private model needs authentication
+- `JWT_SECRET`: Change this for production
 
-### 4. 启动服务
+### 4. Start Server
 
 ```bash
 npm run dev
 ```
 
-服务将在 `http://localhost:3000` 启动。
+Server will start at `http://localhost:3000`.
 
-## API 接口
+## API Endpoints
 
-### 1. POST /api/chat - 核心对话接口
+### 1. POST /api/auth/register - User Registration
 
-**请求体：**
+**Request Body:**
 ```json
 {
-  "workspaceId": "my-workspace-123",
-  "message": "帮我写一个 RESTful API"
+  "username": "testuser"
 }
 ```
 
-**响应：**
+**Response:**
 ```json
 {
-  "response": "我可以帮你设计一个 RESTful API...",
+  "userId": "uuid-123",
+  "username": "testuser",
+  "token": "jwt-token-here"
+}
+```
+
+### 2. POST /api/auth/login - User Login
+
+**Request Body:**
+```json
+{
+  "username": "testuser"
+}
+```
+
+**Response:**
+```json
+{
+  "userId": "uuid-123",
+  "username": "testuser",
+  "token": "jwt-token-here"
+}
+```
+
+### 3. POST /api/chat - Core Chat Endpoint
+
+**Headers:**
+```
+Authorization: Bearer {token}
+```
+
+**Request Body:**
+```json
+{
+  "workspaceId": "my-workspace-123",
+  "message": "Help me write a RESTful API"
+}
+```
+
+**Response:**
+```json
+{
+  "response": "I can help you design a RESTful API...",
   "memoriesUsed": 3,
   "memoriesStored": 1
 }
 ```
 
-**流程：**
-1. 携带 `user_id` 和 `workspace_id` 检索历史记忆（RAG）
-2. 组装 Prompt 并调用 LLM
-3. 异步判断信息重要性，如值得则存入 Milvus
+**Flow:**
+1. Retrieve historical memories with `user_id` and `workspace_id` (RAG)
+2. Assemble prompt and call LLM
+3. Asynchronously evaluate information importance, store in Milvus if worthwhile
 
-### 2. GET /api/memories - 获取记忆列表
+### 4. GET /api/memories - Get Memory List
 
-**Query 参数：**
-- `workspaceId`: 工作空间 ID
+**Headers:**
+```
+Authorization: Bearer {token}
+```
 
-**响应：**
+**Query Parameters:**
+- `workspaceId`: Workspace ID
+
+**Response:**
 ```json
 {
   "count": 5,
@@ -120,66 +166,72 @@ npm run dev
       "id": "uuid-123",
       "userId": "user-abc",
       "workspaceId": "workspace-123",
-      "content": "用户喜欢用 Node.js 开发后端服务",
+      "content": "User prefers Node.js for backend development",
       "score": 0
     }
   ]
 }
 ```
 
-### 3. PUT /api/memories/:id - 更新记忆
+### 5. PUT /api/memories/:id - Update Memory
 
-**请求体：**
+**Headers:**
+```
+Authorization: Bearer {token}
+```
+
+**Request Body:**
 ```json
 {
-  "content": "更新后的记忆内容"
+  "content": "Updated memory content"
 }
 ```
 
-**安全：** 只允许更新自己的记忆（owner 校验）。
+**Security:** Only allows updating own memories (owner validation).
 
-### 4. DELETE /api/memories/:id - 删除记忆
+### 6. DELETE /api/memories/:id - Delete Memory
 
-**安全：** 只允许删除自己的记忆（owner 校验）。
-
-## JWT Token 生成（测试用）
-
-```typescript
-import { generateToken } from './src/middlewares/auth.middleware';
-
-const token = generateToken('user-test-123');
-console.log(token);
+**Headers:**
+```
+Authorization: Bearer {token}
 ```
 
-然后使用 `Authorization: Bearer {token}` header 访问 API。
+**Security:** Only allows deleting own memories (owner validation).
 
-## 技术栈
+## Frontend Testing Page
+
+A frontend testing page is available at `http://localhost:3000/` after starting the server. It provides:
+
+- User registration and login
+- Chat interface with AI
+- Memory management (view, edit, delete)
+
+## Tech Stack
 
 - **Node.js + Express + TypeScript**
-- **Milvus**: 向量数据库（使用 `@zilliz/milvus2-sdk-node`）
-- **JWT**: 身份验证
-- **Anthropic Claude**: LLM 调用
-- **OpenAI Embeddings**: 文本向量化
+- **Milvus**: Vector database (using `@zilliz/milvus2-sdk-node`)
+- **JWT**: Authentication
+- **OpenAI Compatible API**: LLM calls and embeddings
 
-## 核心隔离策略说明
+## Core Isolation Strategy
 
-详见代码注释，重点关注：
+See code comments for details. Key files to review:
 
-1. `src/middlewares/auth.middleware.ts` - 第一道防线
-2. `src/services/milvus.service.ts` - 核心隔离逻辑（所有方法强制 `userId`）
-3. `src/controllers/*.ts` - 如何正确使用 `req.user.userId`
+1. `src/middlewares/auth.middleware.ts` - First line of defense
+2. `src/services/milvus.service.ts` - Core isolation logic (all methods require `userId`)
+3. `src/controllers/*.ts` - How to correctly use `req.user.userId`
 
-## 错误处理
+## Error Handling
 
-所有服务层都有完善的 try-catch：
-- Milvus 连接失败
-- LLM 调用失败
-- Embedding 生成失败
+All service layers have comprehensive try-catch:
+- Milvus connection failure
+- LLM call failure
+- Embedding generation failure
 
-错误会返回统一的错误格式：
+Errors return unified format:
 ```json
 {
   "error": "Internal Server Error",
-  "message": "详细错误信息"
+  "message": "Detailed error message"
 }
 ```

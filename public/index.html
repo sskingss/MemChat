@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MemChat - 后端验证界面</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f7;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #1d1d1f;
+            margin-bottom: 20px;
+            font-size: 32px;
+        }
+
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .section h2 {
+            color: #1d1d1f;
+            margin-bottom: 16px;
+            font-size: 20px;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        label {
+            display: block;
+            color: #6e6e73;
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+
+        input, textarea, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #007aff;
+        }
+
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        button {
+            background: #007aff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #0062cc;
+        }
+
+        button:disabled {
+            background: #c7c7cc;
+            cursor: not-allowed;
+        }
+
+        button.danger {
+            background: #ff3b30;
+        }
+
+        button.danger:hover {
+            background: #d6302a;
+        }
+
+        button.secondary {
+            background: #e5e5ea;
+            color: #1d1d1f;
+        }
+
+        button.secondary:hover {
+            background: #d1d1d6;
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 12px;
+            font-size: 14px;
+        }
+
+        .status.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .status.info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .user-info .badge {
+            background: #10b981;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+        }
+
+        .memories-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .memory-item {
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+
+        .memory-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .memory-id {
+            font-size: 12px;
+            color: #9ca3af;
+        }
+
+        .memory-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        .memory-actions button {
+            padding: 4px 10px;
+            font-size: 12px;
+        }
+
+        .chat-box {
+            max-height: 400px;
+            overflow-y: auto;
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+
+        .message {
+            margin-bottom: 12px;
+        }
+
+        .message .sender {
+            font-weight: 600;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .message.user .sender {
+            color: #007aff;
+        }
+
+        .message.assistant .sender {
+            color: #10b981;
+        }
+
+        .message .content {
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .message.user .content {
+            border-left: 3px solid #007aff;
+        }
+
+        .message.assistant .content {
+            border-left: 3px solid #10b981;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MemChat - 后端验证界面</h1>
+
+        <!-- 认证模块 -->
+        <div class="section">
+            <h2>🔐 认证</h2>
+            <div id="auth-section">
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input type="text" id="username" placeholder="输入用户名" value="testuser">
+                </div>
+                <div class="btn-group">
+                    <button onclick="register()">注册</button>
+                    <button class="secondary" onclick="login()">登录</button>
+                </div>
+                <div id="auth-status"></div>
+            </div>
+            <div id="user-info" class="user-info hidden">
+                <span>当前用户: <strong id="current-username"></strong></span>
+                <span class="badge">已登录</span>
+                <button class="secondary" onclick="logout()">退出</button>
+            </div>
+        </div>
+
+        <!-- 对话模块 -->
+        <div class="section">
+            <h2>💬 对话</h2>
+            <div id="chat-section" class="hidden">
+                <div class="form-group">
+                    <label>Workspace ID</label>
+                    <input type="text" id="workspace-id" placeholder="workspace_001" value="workspace_001">
+                </div>
+                <div class="chat-box" id="chat-messages">
+                    <div class="message assistant">
+                        <div class="sender">Assistant</div>
+                        <div class="content">你好！我是你的 AI 助手，有什么可以帮助你的吗？</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <textarea id="chat-input" placeholder="输入你的消息..." onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
+                </div>
+                <button onclick="sendMessage()" id="send-btn">发送</button>
+                <div id="chat-status"></div>
+            </div>
+            <div id="chat-prompt" class="status info">
+                请先登录后再使用对话功能
+            </div>
+        </div>
+
+        <!-- 记忆管理模块 -->
+        <div class="section">
+            <h2>🧠 记忆管理</h2>
+            <div id="memory-section" class="hidden">
+                <div class="form-group">
+                    <label>Workspace ID</label>
+                    <input type="text" id="memory-workspace-id" placeholder="workspace_001" value="workspace_001">
+                </div>
+                <button onclick="loadMemories()">加载记忆</button>
+                <div id="memory-status"></div>
+                <div class="memories-list" id="memories-list"></div>
+            </div>
+            <div id="memory-prompt" class="status info">
+                请先登录后再查看记忆
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000';
+        let currentToken = localStorage.getItem('token') || '';
+        let currentUsername = localStorage.getItem('username') || '';
+
+        // 初始化
+        if (currentToken && currentUsername) {
+            showLoggedInState();
+        }
+
+        // 认证相关
+        async function register() {
+            const username = document.getElementById('username').value.trim();
+            if (!username) {
+                showStatus('auth-status', 'error', '请输入用户名');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    saveAuth(data);
+                    showStatus('auth-status', 'success', `注册成功！用户ID: ${data.userId}`);
+                } else {
+                    showStatus('auth-status', 'error', data.message || '注册失败');
+                }
+            } catch (err) {
+                showStatus('auth-status', 'error', `错误: ${err.message}`);
+            }
+        }
+
+        async function login() {
+            const username = document.getElementById('username').value.trim();
+            if (!username) {
+                showStatus('auth-status', 'error', '请输入用户名');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    saveAuth(data);
+                    showStatus('auth-status', 'success', `登录成功！用户ID: ${data.userId}`);
+                } else {
+                    showStatus('auth-status', 'error', data.message || '登录失败');
+                }
+            } catch (err) {
+                showStatus('auth-status', 'error', `错误: ${err.message}`);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            currentToken = '';
+            currentUsername = '';
+            showLoggedOutState();
+        }
+
+        function saveAuth(data) {
+            currentToken = data.token;
+            currentUsername = data.username;
+            localStorage.setItem('token', currentToken);
+            localStorage.setItem('username', currentUsername);
+            showLoggedInState();
+        }
+
+        function showLoggedInState() {
+            document.getElementById('auth-section').classList.add('hidden');
+            document.getElementById('user-info').classList.remove('hidden');
+            document.getElementById('current-username').textContent = currentUsername;
+            document.getElementById('chat-section').classList.remove('hidden');
+            document.getElementById('memory-section').classList.remove('hidden');
+            document.getElementById('chat-prompt').classList.add('hidden');
+            document.getElementById('memory-prompt').classList.add('hidden');
+        }
+
+        function showLoggedOutState() {
+            document.getElementById('auth-section').classList.remove('hidden');
+            document.getElementById('user-info').classList.add('hidden');
+            document.getElementById('chat-section').classList.add('hidden');
+            document.getElementById('memory-section').classList.add('hidden');
+            document.getElementById('chat-prompt').classList.remove('hidden');
+            document.getElementById('memory-prompt').classList.remove('hidden');
+        }
+
+        // 对话相关
+        async function sendMessage() {
+            const message = document.getElementById('chat-input').value.trim();
+            const workspaceId = document.getElementById('workspace-id').value.trim();
+
+            if (!message || !workspaceId) {
+                showStatus('chat-status', 'error', '请输入消息和 Workspace ID');
+                return;
+            }
+
+            const sendBtn = document.getElementById('send-btn');
+            sendBtn.disabled = true;
+
+            // 添加用户消息
+            appendMessage('user', message);
+            document.getElementById('chat-input').value = '';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ workspaceId, message })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    appendMessage('assistant', data.response);
+                    showStatus('chat-status', 'success',
+                        `回复成功 | 使用记忆: ${data.memoriesUsed} | 存储记忆: ${data.memoriesStored}`);
+                } else {
+                    showStatus('chat-status', 'error', data.message || '对话失败');
+                }
+            } catch (err) {
+                showStatus('chat-status', 'error', `错误: ${err.message}`);
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        function appendMessage(sender, content) {
+            const chatBox = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            div.className = `message ${sender}`;
+            div.innerHTML = `
+                <div class="sender">${sender === 'user' ? 'You' : 'Assistant'}</div>
+                <div class="content">${escapeHtml(content)}</div>
+            `;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // 记忆相关
+        async function loadMemories() {
+            const workspaceId = document.getElementById('memory-workspace-id').value.trim();
+
+            if (!workspaceId) {
+                showStatus('memory-status', 'error', '请输入 Workspace ID');
+                return;
+            }
+
+            showStatus('memory-status', 'info', '加载中...');
+
+            try {
+                const res = await fetch(`${API_BASE}/api/memories?workspaceId=${encodeURIComponent(workspaceId)}`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    renderMemories(data.memories || []);
+                    showStatus('memory-status', 'success', `加载成功，共 ${data.count} 条记忆`);
+                } else {
+                    showStatus('memory-status', 'error', data.message || '加载失败');
+                }
+            } catch (err) {
+                showStatus('memory-status', 'error', `错误: ${err.message}`);
+            }
+        }
+
+        async function updateMemory(id, oldContent) {
+            const newContent = prompt('更新记忆内容:', oldContent);
+            if (newContent === null || newContent.trim() === '') return;
+
+            try {
+                const res = await fetch(`${API_BASE}/api/memories/${id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ content: newContent })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    alert('更新成功');
+                    loadMemories(); // 重新加载
+                } else {
+                    alert(`更新失败: ${data.message}`);
+                }
+            } catch (err) {
+                alert(`错误: ${err.message}`);
+            }
+        }
+
+        async function deleteMemory(id) {
+            if (!confirm('确定要删除这条记忆吗？')) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/api/memories/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    alert('删除成功');
+                    loadMemories(); // 重新加载
+                } else {
+                    alert(`删除失败: ${data.message}`);
+                }
+            } catch (err) {
+                alert(`错误: ${err.message}`);
+            }
+        }
+
+        function renderMemories(memories) {
+            const list = document.getElementById('memories-list');
+            if (memories.length === 0) {
+                list.innerHTML = '<div class="status info">暂无记忆</div>';
+                return;
+            }
+            list.innerHTML = memories.map(m => `
+                <div class="memory-item">
+                    <div class="memory-item-header">
+                        <span class="memory-id">ID: ${escapeHtml(m.id?.substring(0, 20) || '')}...</span>
+                        <div class="memory-actions">
+                            <button onclick="updateMemory('${escapeHtml(m.id)}', '${escapeHtml(m.content).replace(/'/g, "\\'")}')">编辑</button>
+                            <button class="danger" onclick="deleteMemory('${escapeHtml(m.id)}')">删除</button>
+                        </div>
+                    </div>
+                    <div class="memory-content">${escapeHtml(m.content)}</div>
+                    <div style="margin-top:8px;font-size:12px;color:#9ca3af;">
+                        距离: ${m.score ? m.score.toFixed(4) : 'N/A'}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 工具函数
+        function showStatus(elementId, type, message) {
+            const el = document.getElementById(elementId);
+            el.className = `status ${type}`;
+            el.textContent = message;
+            el.classList.remove('hidden');
+            if (type !== 'error') {
+                setTimeout(() => {
+                    el.classList.add('hidden');
+                }, 3000);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

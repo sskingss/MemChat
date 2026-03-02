@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import { config } from './config';
 import apiRoutes from './routes';
 
@@ -9,6 +10,9 @@ app.use(express.json());
 
 // 中间件：解析 URL-encoded 请求体
 app.use(express.urlencoded({ extended: true }));
+
+// 静态文件服务（前端验证页面）
+app.use(express.static(path.join(__dirname, '../public')));
 
 // 健康检查接口（无需鉴权）
 app.get('/health', (req, res) => {
