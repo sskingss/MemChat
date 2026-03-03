@@ -1,7 +1,7 @@
 import { milvusService } from './milvus.service';
 import { embeddingService } from './embedding.service';
 import { llmService } from './llm.service';
-import { MilvusError } from '../utils/errors';
+import { chunkingService } from './chunking.service';
 
 /**
  * 记忆管理服务
@@ -39,19 +39,31 @@ export class MemoryService {
         return false;
       }
 
-      // 2. 生成向量
-      const vector = await embeddingService.generateEmbedding(importance.summary);
+      // 2. 使用 Chunking 策略处理长文本
+      const summary = importance.summary;
+      const chunks = chunkingService.chunkText(summary);
+      const stats = chunkingService.getChunkStats(chunks);
 
-      // 3. 存储到 Milvus
-      // 【隔离保证】userId 和 workspaceId 强制绑定
-      const memoryId = await milvusService.insertMemory(
-        userId,
-        workspaceId,
-        importance.summary,
-        vector
-      );
+      console.log(`[Memory] Chunking summary into ${stats.chunks} chunks (avg ${stats.avgTokens.toFixed(0)} tokens)`);
 
-      console.log(`[Memory] 已存储记忆: ${memoryId} - ${importance.summary}`);
+      // 3. 为每个 chunk 生成向量并存储
+      let storedCount = 0;
+      for (const chunk of chunks) {
+        const vector = await embeddingService.generateEmbedding(chunk);
+
+        // 【隔离保证】userId 和 workspaceId 强制绑定
+        const memoryId = await milvusService.insertMemory(
+          userId,
+          workspaceId,
+          chunk,
+          vector
+        );
+
+        storedCount++;
+        console.log(`[Memory] Stored chunk ${storedCount}/${stats.chunks}: ${chunk.substring(0, 50)}...`);
+      }
+
+      console.log(`[Memory] 完成存储 ${storedCount} 个记忆 chunks`);
       return true;
     } catch (error) {
       // 记忆存储失败不应该影响主流程

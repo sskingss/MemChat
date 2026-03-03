@@ -28,6 +28,12 @@ export const config = {
     model: process.env.LLM_MODEL || 'gpt-4',
     embeddingModel: process.env.LLM_EMBEDDING_MODEL || 'text-embedding-ada-002',
   },
+
+  // Chunking 配置
+  chunking: {
+    maxTokensPerChunk: parseInt(process.env.CHUNK_MAX_TOKENS || '400', 10),
+    overlapTokens: parseInt(process.env.CHUNK_OVERLAP_TOKENS || '80', 10),
+  },
 };
 
 // 运行时配置校验
