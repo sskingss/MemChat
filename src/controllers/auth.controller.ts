@@ -1,14 +1,15 @@
 import { Request, Response } from 'express';
-import { v4 as uuidv4 } from 'uuid';
+import { milvusService } from '../services/milvus.service';
 import { generateToken } from '../middlewares/auth.middleware';
-import { AuthError } from '../utils/errors';
 
 /**
  * 用户注册
  *
- * 简化实现：无需密码，直接生成用户 ID 并返回 token
+ * 如果用户已存在，返回现有用户信息；
+ * 否则创建新用户并返回 token
+ * 同时检查用户是否已创建人格配置
  */
-export const register = (req: Request, res: Response) => {
+export const register = async (req: Request, res: Response) => {
   try {
     const { username } = req.body;
 
@@ -20,16 +21,29 @@ export const register = (req: Request, res: Response) => {
       return;
     }
 
-    // 生成用户 ID
-    const userId = uuidv4();
+    // 验证 username 只能包含字母
+    if (!/^[a-zA-Z]+$/.test(username)) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'username 只能包含字母 (a-z, A-Z)',
+      });
+      return;
+    }
+
+    // 注册或获取用户（保证同一 username 对应同一 userId）
+    const user = await milvusService.registerOrGetUser(username);
+
+    // 检查用户是否已创建人格
+    const persona = await milvusService.queryUserPersona(user.userId);
 
     // 生成 JWT token
-    const token = generateToken(userId);
+    const token = generateToken(user.userId);
 
     res.status(201).json({
-      userId,
-      username,
+      userId: user.userId,
+      username: user.username,
       token,
+      hasPersona: !!persona, // 是否已创建人格
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -43,10 +57,11 @@ export const register = (req: Request, res: Response) => {
 /**
  * 用户登录
  *
- * 简化实现：使用 username 返回 token
- * 实际项目中应该验证密码等凭据
+ * 如果用户已存在，返回 token；
+ * 如果用户不存在，自动创建新用户
+ * 同时检查用户是否已创建人格配置
  */
-export const login = (req: Request, res: Response) => {
+export const login = async (req: Request, res: Response) => {
   try {
     const { username } = req.body;
 
@@ -58,17 +73,29 @@ export const login = (req: Request, res: Response) => {
       return;
     }
 
-    // 简化版：直接使用 username 作为 userId 的种子
-    // 实际项目中应该从数据库查找用户
-    const userId = username; // 简化实现，实际应该从数据库获取
+    // 验证 username 只能包含字母
+    if (!/^[a-zA-Z]+$/.test(username)) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'username 只能包含字母 (a-z, A-Z)',
+      });
+      return;
+    }
+
+    // 登录或注册（保证同一 username 对应同一 userId）
+    const user = await milvusService.registerOrGetUser(username);
+
+    // 检查用户是否已创建人格
+    const persona = await milvusService.queryUserPersona(user.userId);
 
     // 生成 JWT token
-    const token = generateToken(userId);
+    const token = generateToken(user.userId);
 
     res.json({
-      userId,
-      username,
+      userId: user.userId,
+      username: user.username,
       token,
+      hasPersona: !!persona, // 是否已创建人格
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

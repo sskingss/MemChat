@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MemChat - Backend Testing UI</title>
+    <title>MemChat - Personalized AI Chat</title>
     <style>
         * {
             margin: 0;
@@ -112,6 +112,14 @@
             background: #d1d1d6;
         }
 
+        button.success {
+            background: #10b981;
+        }
+
+        button.success:hover {
+            background: #059669;
+        }
+
         .status {
             padding: 10px;
             border-radius: 8px;
@@ -185,7 +193,7 @@
         }
 
         .chat-box {
-            max-height: 400px;
+            max-height: 500px;
             overflow-y: auto;
             background: #f9fafb;
             border-radius: 8px;
@@ -216,6 +224,7 @@
             padding: 10px;
             border-radius: 8px;
             font-size: 14px;
+            white-space: pre-wrap;
         }
 
         .message.user .content {
@@ -234,15 +243,159 @@
             display: flex;
             gap: 8px;
         }
+
+        /* Bootstrap specific styles */
+        .bootstrap-container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .phase-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: #f9fafb;
+            border-radius: 12px;
+        }
+
+        .phase-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            opacity: 0.4;
+            transition: opacity 0.3s;
+        }
+
+        .phase-step.active {
+            opacity: 1;
+        }
+
+        .phase-step.completed {
+            opacity: 0.8;
+        }
+
+        .phase-step.completed .phase-number {
+            background: #10b981;
+        }
+
+        .phase-number {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: #007aff;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+        }
+
+        .phase-label {
+            font-size: 12px;
+            color: #6e6e73;
+        }
+
+        .preview-card {
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 16px;
+            margin-top: 16px;
+        }
+
+        .preview-card h3 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: #1d1d1f;
+        }
+
+        .preview-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e5e5ea;
+            font-size: 14px;
+        }
+
+        .preview-item:last-child {
+            border-bottom: none;
+        }
+
+        .preview-label {
+            color: #6e6e73;
+        }
+
+        .preview-value {
+            color: #1d1d1f;
+            font-weight: 500;
+        }
+
+        .preview-value.empty {
+            color: #9ca3af;
+            font-style: italic;
+        }
+
+        .completeness-bar {
+            height: 8px;
+            background: #e5e5ea;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+
+        .completeness-fill {
+            height: 100%;
+            background: #10b981;
+            transition: width 0.3s;
+        }
+
+        .persona-display {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .persona-display h3 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .persona-display .relationship {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .welcome-text {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .welcome-text h2 {
+            font-size: 28px;
+            margin-bottom: 16px;
+            border: none;
+            padding: 0;
+        }
+
+        .welcome-text p {
+            color: #6e6e73;
+            font-size: 16px;
+            max-width: 500px;
+            margin: 0 auto;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>MemChat - Backend Testing UI</h1>
+        <h1>MemChat</h1>
 
         <!-- Authentication Section -->
-        <div class="section">
-            <h2>🔐 Authentication</h2>
+        <div class="section" id="auth-section-container">
+            <h2>Authentication</h2>
             <div id="auth-section">
                 <div class="form-group">
                     <label>Username</label>
@@ -261,46 +414,108 @@
             </div>
         </div>
 
-        <!-- Chat Section -->
-        <div class="section">
-            <h2>💬 Chat</h2>
-            <div id="chat-section" class="hidden">
-                <div class="form-group">
-                    <label>Workspace ID</label>
-                    <input type="text" id="workspace-id" placeholder="workspace_001" value="workspace_001">
-                </div>
-                <div class="chat-box" id="chat-messages">
-                    <div class="message assistant">
-                        <div class="sender">Assistant</div>
-                        <div class="content">Hello! I'm your AI assistant. How can I help you?</div>
+        <!-- Bootstrap Section (Persona Creation) -->
+        <div class="section hidden" id="bootstrap-section">
+            <div class="bootstrap-container">
+                <!-- Phase Indicator -->
+                <div class="phase-indicator">
+                    <div class="phase-step active" id="phase-1">
+                        <div class="phase-number">1</div>
+                        <div class="phase-label">Hello</div>
+                    </div>
+                    <div class="phase-step" id="phase-2">
+                        <div class="phase-number">2</div>
+                        <div class="phase-label">You</div>
+                    </div>
+                    <div class="phase-step" id="phase-3">
+                        <div class="phase-number">3</div>
+                        <div class="phase-label">Personality</div>
                     </div>
                 </div>
-                <div class="form-group">
-                    <textarea id="chat-input" placeholder="Type your message..." onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
+
+                <div class="welcome-text" id="bootstrap-welcome">
+                    <h2>Let's Create Your AI Partner</h2>
+                    <p>We'll have a conversation to understand what you need. This takes about 5-8 rounds.</p>
+                    <button onclick="startBootstrap()" style="margin-top: 20px;">Start</button>
                 </div>
-                <button onclick="sendMessage()" id="send-btn">Send</button>
-                <div id="chat-status"></div>
-            </div>
-            <div id="chat-prompt" class="status info">
-                Please login first to use chat feature
+
+                <div id="bootstrap-chat-container" class="hidden">
+                    <div class="chat-box" id="bootstrap-messages"></div>
+                    <div class="form-group">
+                        <textarea id="bootstrap-input" placeholder="Type your message..." onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendBootstrapMessage();}"></textarea>
+                    </div>
+                    <div class="btn-group">
+                        <button onclick="sendBootstrapMessage()" id="bootstrap-send-btn">Send</button>
+                        <button class="secondary" onclick="showPreview()">Preview Persona</button>
+                    </div>
+                </div>
+
+                <!-- Preview Card -->
+                <div class="preview-card hidden" id="preview-card">
+                    <h3>Persona Preview <span id="completeness-text"></span></h3>
+                    <div class="completeness-bar">
+                        <div class="completeness-fill" id="completeness-fill" style="width: 0%"></div>
+                    </div>
+                    <div id="preview-content"></div>
+                    <div class="btn-group" style="margin-top: 16px;">
+                        <button class="success" onclick="confirmPersona()" id="confirm-btn">Confirm & Save</button>
+                        <button class="secondary" onclick="hidePreview()">Continue Editing</button>
+                    </div>
+                </div>
+
+                <div id="bootstrap-status"></div>
             </div>
         </div>
 
-        <!-- Memory Management Section -->
-        <div class="section">
-            <h2>🧠 Memory Management</h2>
-            <div id="memory-section" class="hidden">
-                <div class="form-group">
-                    <label>Workspace ID</label>
-                    <input type="text" id="memory-workspace-id" placeholder="workspace_001" value="workspace_001">
+        <!-- Chat Section (After Persona Created) -->
+        <div class="section hidden" id="chat-section">
+            <div class="persona-display" id="persona-display">
+                <h3 id="persona-ai-name">AI</h3>
+                <div class="relationship" id="persona-relationship">Your AI partner</div>
+            </div>
+            <h2>Chat</h2>
+            <div class="form-group">
+                <label>Workspace ID</label>
+                <input type="text" id="workspace-id" placeholder="workspace_001" value="workspace_001">
+            </div>
+            <div class="chat-box" id="chat-messages">
+                <div class="message assistant">
+                    <div class="sender" id="chat-ai-name">Assistant</div>
+                    <div class="content">Hello! I'm your AI assistant. How can I help you?</div>
                 </div>
-                <button onclick="loadMemories()">Load Memories</button>
-                <div id="memory-status"></div>
-                <div class="memories-list" id="memories-list"></div>
             </div>
-            <div id="memory-prompt" class="status info">
-                Please login first to view memories
+            <div class="form-group">
+                <textarea id="chat-input" placeholder="Type your message..." onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
             </div>
+            <div class="btn-group">
+                <button onclick="sendMessage()" id="send-btn">Send</button>
+                <button class="secondary" onclick="showPersonaEditor()">Edit Persona</button>
+            </div>
+            <div id="chat-status"></div>
+        </div>
+
+        <!-- Persona Editor -->
+        <div class="section hidden" id="persona-editor-section">
+            <h2>Edit Persona</h2>
+            <div id="persona-editor-content"></div>
+            <div class="btn-group" style="margin-top: 16px;">
+                <button onclick="savePersonaEdits()">Save Changes</button>
+                <button class="danger" onclick="deletePersona()">Delete Persona</button>
+                <button class="secondary" onclick="hidePersonaEditor()">Cancel</button>
+            </div>
+            <div id="editor-status"></div>
+        </div>
+
+        <!-- Memory Management Section -->
+        <div class="section hidden" id="memory-section">
+            <h2>Memory Management</h2>
+            <div class="form-group">
+                <label>Workspace ID</label>
+                <input type="text" id="memory-workspace-id" placeholder="workspace_001" value="workspace_001">
+            </div>
+            <button onclick="loadMemories()">Load Memories</button>
+            <div id="memory-status"></div>
+            <div class="memories-list" id="memories-list"></div>
         </div>
     </div>
 
@@ -308,6 +523,8 @@
         const API_BASE = 'http://localhost:3000';
         let currentToken = localStorage.getItem('token') || '';
         let currentUsername = localStorage.getItem('username') || '';
+        let currentPersona = null;
+        let bootstrapSessionId = null;
 
         // Initialize
         if (currentToken && currentUsername) {
@@ -331,7 +548,7 @@
                 const data = await res.json();
                 if (res.ok) {
                     saveAuth(data);
-                    showStatus('auth-status', 'success', `Registration successful! User ID: ${data.userId}`);
+                    showStatus('auth-status', 'success', `Registration successful!`);
                 } else {
                     showStatus('auth-status', 'error', data.message || 'Registration failed');
                 }
@@ -354,9 +571,10 @@
                     body: JSON.stringify({ username })
                 });
                 const data = await res.json();
+                console.log('data', data)
                 if (res.ok) {
                     saveAuth(data);
-                    showStatus('auth-status', 'success', `Login successful! User ID: ${data.userId}`);
+                    showStatus('auth-status', 'success', `Login successful!`);
                 } else {
                     showStatus('auth-status', 'error', data.message || 'Login failed');
                 }
@@ -370,34 +588,281 @@
             localStorage.removeItem('username');
             currentToken = '';
             currentUsername = '';
+            currentPersona = null;
+            bootstrapSessionId = null;
             showLoggedOutState();
         }
 
-        function saveAuth(data) {
+        async function saveAuth(data) {
             currentToken = data.token;
             currentUsername = data.username;
             localStorage.setItem('token', currentToken);
             localStorage.setItem('username', currentUsername);
-            showLoggedInState();
+            await showLoggedInState();
         }
 
-        function showLoggedInState() {
+        async function showLoggedInState() {
             document.getElementById('auth-section').classList.add('hidden');
             document.getElementById('user-info').classList.remove('hidden');
             document.getElementById('current-username').textContent = currentUsername;
-            document.getElementById('chat-section').classList.remove('hidden');
-            document.getElementById('memory-section').classList.remove('hidden');
-            document.getElementById('chat-prompt').classList.add('hidden');
-            document.getElementById('memory-prompt').classList.add('hidden');
+
+            // Check if user has persona
+            await checkPersona();
         }
 
         function showLoggedOutState() {
             document.getElementById('auth-section').classList.remove('hidden');
             document.getElementById('user-info').classList.add('hidden');
+            document.getElementById('bootstrap-section').classList.add('hidden');
             document.getElementById('chat-section').classList.add('hidden');
             document.getElementById('memory-section').classList.add('hidden');
-            document.getElementById('chat-prompt').classList.remove('hidden');
-            document.getElementById('memory-prompt').classList.remove('hidden');
+        }
+
+        // Persona check
+        async function checkPersona() {
+            try {
+                const res = await fetch(`${API_BASE}/api/personas/user`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                const data = await res.json();
+
+                if (data.hasPersona && data.persona) {
+                    currentPersona = data.persona;
+                    showChatState();
+                } else {
+                    showBootstrapState();
+                }
+            } catch (err) {
+                console.error('Error checking persona:', err);
+                showBootstrapState();
+            }
+        }
+
+        function showBootstrapState() {
+            document.getElementById('bootstrap-section').classList.remove('hidden');
+            document.getElementById('chat-section').classList.add('hidden');
+            document.getElementById('memory-section').classList.add('hidden');
+            document.getElementById('persona-editor-section').classList.add('hidden');
+
+            // Reset bootstrap UI
+            document.getElementById('bootstrap-welcome').classList.remove('hidden');
+            document.getElementById('bootstrap-chat-container').classList.add('hidden');
+            document.getElementById('preview-card').classList.add('hidden');
+            document.getElementById('bootstrap-messages').innerHTML = '';
+            resetPhaseIndicator();
+        }
+
+        function showChatState() {
+            document.getElementById('bootstrap-section').classList.add('hidden');
+            document.getElementById('chat-section').classList.remove('hidden');
+            document.getElementById('memory-section').classList.remove('hidden');
+
+            // Update persona display
+            document.getElementById('persona-ai-name').textContent = currentPersona.aiName;
+            document.getElementById('persona-relationship').textContent = `${currentPersona.userName}'s ${currentPersona.relationship}`;
+            document.getElementById('chat-ai-name').textContent = currentPersona.aiName;
+        }
+
+        // Bootstrap flow
+        async function startBootstrap() {
+            try {
+                const res = await fetch(`${API_BASE}/api/personas/bootstrap/start`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    bootstrapSessionId = data.sessionId;
+                    document.getElementById('bootstrap-welcome').classList.add('hidden');
+                    document.getElementById('bootstrap-chat-container').classList.remove('hidden');
+
+                    // Add AI greeting
+                    appendBootstrapMessage('assistant', data.message);
+                    updatePhaseIndicator(data.phase);
+
+                    // Show preview card after starting
+                    autoUpdatePreview();
+                } else {
+                    showStatus('bootstrap-status', 'error', data.message || 'Failed to start');
+                }
+            } catch (err) {
+                showStatus('bootstrap-status', 'error', `Error: ${err.message}`);
+            }
+        }
+
+        async function sendBootstrapMessage() {
+            const message = document.getElementById('bootstrap-input').value.trim();
+            if (!message || !bootstrapSessionId) return;
+
+            const sendBtn = document.getElementById('bootstrap-send-btn');
+            sendBtn.disabled = true;
+
+            // Append user message
+            appendBootstrapMessage('user', message);
+            document.getElementById('bootstrap-input').value = '';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/personas/bootstrap/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ message, sessionId: bootstrapSessionId })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    appendBootstrapMessage('assistant', data.message);
+                    updatePhaseIndicator(data.phase);
+
+                    if (data.isComplete) {
+                        document.getElementById('confirm-btn').disabled = false;
+                    }
+
+                    // Auto-update preview after each message
+                    autoUpdatePreview();
+                } else {
+                    showStatus('bootstrap-status', 'error', data.message || 'Chat failed');
+                }
+            } catch (err) {
+                showStatus('bootstrap-status', 'error', `Error: ${err.message}`);
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        function appendBootstrapMessage(sender, content) {
+            const chatBox = document.getElementById('bootstrap-messages');
+            const div = document.createElement('div');
+            div.className = `message ${sender}`;
+            div.innerHTML = `
+                <div class="sender">${sender === 'user' ? 'You' : 'AI'}</div>
+                <div class="content">${escapeHtml(content)}</div>
+            `;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function updatePhaseIndicator(phase) {
+            for (let i = 1; i <= 3; i++) {
+                const step = document.getElementById(`phase-${i}`);
+                step.classList.remove('active', 'completed');
+                if (i < phase) {
+                    step.classList.add('completed');
+                } else if (i === phase) {
+                    step.classList.add('active');
+                }
+            }
+        }
+
+        function resetPhaseIndicator() {
+            for (let i = 1; i <= 3; i++) {
+                const step = document.getElementById(`phase-${i}`);
+                step.classList.remove('active', 'completed');
+            }
+            document.getElementById('phase-1').classList.add('active');
+        }
+
+        async function showPreview() {
+            if (!bootstrapSessionId) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/api/personas/bootstrap/preview?sessionId=${bootstrapSessionId}`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    renderPreview(data);
+                    document.getElementById('preview-card').classList.remove('hidden');
+                } else {
+                    showStatus('bootstrap-status', 'error', data.message || 'Preview failed');
+                }
+            } catch (err) {
+                showStatus('bootstrap-status', 'error', `Error: ${err.message}`);
+            }
+        }
+
+        async function autoUpdatePreview() {
+            if (!bootstrapSessionId) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/api/personas/bootstrap/preview?sessionId=${bootstrapSessionId}`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    renderPreview(data);
+                    // Always show preview card after each message
+                    document.getElementById('preview-card').classList.remove('hidden');
+                }
+            } catch (err) {
+                console.error('Auto update preview failed:', err);
+            }
+        }
+
+        function renderPreview(data) {
+            const { persona, completeness, missingFields } = data;
+            document.getElementById('completeness-text').textContent = `(${completeness}% complete)`;
+            document.getElementById('completeness-fill').style.width = `${completeness}%`;
+
+            const previewContent = document.getElementById('preview-content');
+            const fields = [
+                { key: 'aiName', label: 'AI Name' },
+                { key: 'userName', label: 'Your Name' },
+                { key: 'relationship', label: 'Relationship' },
+                { key: 'language', label: 'Language' },
+                { key: 'coreTraits', label: 'Core Traits' },
+                { key: 'communicationStyle', label: 'Communication Style' }
+            ];
+
+            previewContent.innerHTML = fields.map(f => {
+                const value = persona[f.key];
+                const isEmpty = !value || (Array.isArray(value) && value.length === 0);
+                return `
+                    <div class="preview-item">
+                        <span class="preview-label">${f.label}</span>
+                        <span class="preview-value ${isEmpty ? 'empty' : ''}">${isEmpty ? '(not set)' : escapeHtml(Array.isArray(value) ? value.join(', ') : value)}</span>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('confirm-btn').disabled = completeness < 100;
+        }
+
+        function hidePreview() {
+            document.getElementById('preview-card').classList.add('hidden');
+        }
+
+        async function confirmPersona() {
+            if (!bootstrapSessionId) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/api/personas/bootstrap/confirm`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ sessionId: bootstrapSessionId })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    currentPersona = data.persona;
+                    showStatus('bootstrap-status', 'success', 'Persona created successfully!');
+                    setTimeout(() => {
+                        showChatState();
+                    }, 1000);
+                } else {
+                    showStatus('bootstrap-status', 'error', data.message || 'Confirmation failed');
+                }
+            } catch (err) {
+                showStatus('bootstrap-status', 'error', `Error: ${err.message}`);
+            }
         }
 
         // Chat
@@ -413,8 +878,7 @@
             const sendBtn = document.getElementById('send-btn');
             sendBtn.disabled = true;
 
-            // Append user message
-            appendMessage('user', message);
+            appendChatMessage('user', message);
             document.getElementById('chat-input').value = '';
 
             try {
@@ -428,9 +892,9 @@
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    appendMessage('assistant', data.response);
+                    appendChatMessage('assistant', data.response);
                     showStatus('chat-status', 'success',
-                        `Response received | Memories used: ${data.memoriesUsed} | Memories stored: ${data.memoriesStored}`);
+                        `Memories used: ${data.memoriesUsed} | Stored: ${data.memoriesStored}`);
                 } else {
                     showStatus('chat-status', 'error', data.message || 'Chat failed');
                 }
@@ -441,16 +905,111 @@
             }
         }
 
-        function appendMessage(sender, content) {
+        function appendChatMessage(sender, content) {
             const chatBox = document.getElementById('chat-messages');
             const div = document.createElement('div');
             div.className = `message ${sender}`;
             div.innerHTML = `
-                <div class="sender">${sender === 'user' ? 'You' : 'Assistant'}</div>
+                <div class="sender">${sender === 'user' ? 'You' : currentPersona?.aiName || 'Assistant'}</div>
                 <div class="content">${escapeHtml(content)}</div>
             `;
             chatBox.appendChild(div);
             chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // Persona Editor
+        function showPersonaEditor() {
+            document.getElementById('chat-section').classList.add('hidden');
+            document.getElementById('persona-editor-section').classList.remove('hidden');
+
+            const fields = [
+                { key: 'aiName', label: 'AI Name', type: 'text' },
+                { key: 'userName', label: 'Your Name', type: 'text' },
+                { key: 'relationship', label: 'Relationship', type: 'text' },
+                { key: 'language', label: 'Language', type: 'text' },
+                { key: 'coreTraits', label: 'Core Traits (comma separated)', type: 'text' },
+                { key: 'communicationStyle', label: 'Communication Style', type: 'textarea' },
+                { key: 'longTermVision', label: 'Long-term Vision', type: 'textarea' }
+            ];
+
+            document.getElementById('persona-editor-content').innerHTML = fields.map(f => `
+                <div class="form-group">
+                    <label>${f.label}</label>
+                    ${f.type === 'textarea'
+                        ? `<textarea id="edit-${f.key}">${escapeHtml(currentPersona[f.key] || '')}</textarea>`
+                        : `<input type="text" id="edit-${f.key}" value="${escapeHtml(Array.isArray(currentPersona[f.key]) ? currentPersona[f.key].join(', ') : currentPersona[f.key] || '')}">`
+                    }
+                </div>
+            `).join('');
+        }
+
+        function hidePersonaEditor() {
+            document.getElementById('persona-editor-section').classList.add('hidden');
+            document.getElementById('chat-section').classList.remove('hidden');
+        }
+
+        async function savePersonaEdits() {
+            const coreTraitsValue = document.getElementById('edit-coreTraits').value;
+            const updates = {
+                aiName: document.getElementById('edit-aiName').value,
+                userName: document.getElementById('edit-userName').value,
+                relationship: document.getElementById('edit-relationship').value,
+                language: document.getElementById('edit-language').value,
+                coreTraits: coreTraitsValue ? coreTraitsValue.split(',').map(t => t.trim()).filter(t => t) : [],
+                communicationStyle: document.getElementById('edit-communicationStyle').value,
+                longTermVision: document.getElementById('edit-longTermVision').value
+            };
+
+            try {
+                const res = await fetch(`${API_BASE}/api/personas/user`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify(updates)
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    currentPersona = data.persona;
+                    showStatus('editor-status', 'success', 'Persona updated!');
+                    setTimeout(() => {
+                        hidePersonaEditor();
+                        document.getElementById('persona-ai-name').textContent = currentPersona.aiName;
+                        document.getElementById('persona-relationship').textContent = `${currentPersona.userName}'s ${currentPersona.relationship}`;
+                    }, 500);
+                } else {
+                    showStatus('editor-status', 'error', data.message || 'Update failed');
+                }
+            } catch (err) {
+                showStatus('editor-status', 'error', `Error: ${err.message}`);
+            }
+        }
+
+        async function deletePersona() {
+            if (!confirm('Are you sure you want to delete your persona? You will need to create a new one.')) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/api/personas/user`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    currentPersona = null;
+                    bootstrapSessionId = null;
+                    showStatus('editor-status', 'success', 'Persona deleted');
+                    setTimeout(() => {
+                        showBootstrapState();
+                    }, 500);
+                } else {
+                    showStatus('editor-status', 'error', data.message || 'Delete failed');
+                }
+            } catch (err) {
+                showStatus('editor-status', 'error', `Error: ${err.message}`);
+            }
         }
 
         // Memory
@@ -471,7 +1030,7 @@
                 const data = await res.json();
                 if (res.ok) {
                     renderMemories(data.memories || []);
-                    showStatus('memory-status', 'success', `Loaded successfully, ${data.count} memories found`);
+                    showStatus('memory-status', 'success', `Loaded ${data.count} memories`);
                 } else {
                     showStatus('memory-status', 'error', data.message || 'Load failed');
                 }
@@ -496,7 +1055,7 @@
                 const data = await res.json();
                 if (res.ok) {
                     alert('Update successful');
-                    loadMemories(); // Reload
+                    loadMemories();
                 } else {
                     alert(`Update failed: ${data.message}`);
                 }
@@ -516,7 +1075,7 @@
                 const data = await res.json();
                 if (res.ok) {
                     alert('Delete successful');
-                    loadMemories(); // Reload
+                    loadMemories();
                 } else {
                     alert(`Delete failed: ${data.message}`);
                 }
@@ -562,6 +1121,7 @@
         }
 
         function escapeHtml(text) {
+            if (!text) return '';
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;

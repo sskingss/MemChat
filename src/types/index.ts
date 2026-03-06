@@ -47,3 +47,6 @@ export interface MilvusCollectionSchema {
   name: string;
   dimension: number;
 }
+
+// 人格系统类型导出
+export * from './persona';

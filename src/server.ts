@@ -2,6 +2,7 @@ import app from './app';
 import { config, validateConfig } from './config';
 import { milvusService } from './services/milvus.service';
 import { embeddingService } from './services/embedding.service';
+import { personaService } from './services/persona.service';
 
 /**
  * 服务启动入口
@@ -10,7 +11,8 @@ import { embeddingService } from './services/embedding.service';
  * 1. 校验配置
  * 2. 预加载 Embedding 模型
  * 3. 初始化 Milvus Collection
- * 4. 启动 Express 服务器
+ * 4. 初始化人格系统
+ * 5. 启动 Express 服务器
  */
 async function startServer() {
   try {
@@ -26,7 +28,11 @@ async function startServer() {
     console.log('[Startup] 初始化 Milvus Collection...');
     await milvusService.initCollection();
 
-    // 4. 启动服务器
+    // 4. 初始化人格系统
+    console.log('[Startup] 初始化人格系统...');
+    await personaService.init();
+
+    // 5. 启动服务器
     app.listen(config.port, () => {
       console.log(`[Startup] 服务器启动成功！`);
       console.log(`[Startup] 环境: ${config.nodeEnv}`);

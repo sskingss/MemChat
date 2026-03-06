@@ -48,8 +48,8 @@ export const chat = async (req: Request, res: Response, next: NextFunction) => {
       5 // 取最相关的 5 条记忆
     );
 
-    // 3. 调用 LLM 生成回复
-    const reply = await llmService.chat(message, memories);
+    // 3. 调用 LLM 生成回复（传入 userId 获取人格）
+    const reply = await llmService.chat(user.userId, message, memories);
 
     // 4. 异步处理记忆存储（不阻塞主流程）
     // 这样即使记忆存储失败，用户也能正常收到回复

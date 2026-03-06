@@ -53,7 +53,7 @@ export class EmbeddingService {
       });
 
       // 转换为数组
-      const embedding = Array.from(output.data);
+      const embedding = Array.from(output.data) as number[];
       return embedding;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';

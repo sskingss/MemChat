@@ -3,6 +3,7 @@ import { authMiddleware } from '../middlewares/auth.middleware';
 import authRoutes from './auth.routes';
 import chatRoutes from './chat.routes';
 import memoryRoutes from './memory.routes';
+import personaRoutes from './persona.routes';
 
 const router = Router();
 
@@ -21,5 +22,6 @@ router.use(authMiddleware);
 // 需要鉴权的子路由
 router.use('/chat', chatRoutes);
 router.use('/memories', memoryRoutes);
+router.use('/personas', personaRoutes);
 
 export default router;

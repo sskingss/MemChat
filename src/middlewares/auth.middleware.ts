@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
 import { AuthError } from '../utils/errors';
@@ -95,9 +95,5 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
  * 在真实项目中，这应该放在 login endpoint 的 controller 中
  */
 export const generateToken = (userId: string): string => {
-  return jwt.sign(
-    { userId },
-    config.jwt.secret,
-    { expiresIn: config.jwt.expiresIn }
-  );
+  return jwt.sign({ userId }, config.jwt.secret, { expiresIn: '7d' });
 };

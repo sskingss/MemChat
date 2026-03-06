@@ -1,7 +1,8 @@
 import OpenAI from 'openai';
 import { config } from '../config';
 import { LLMError } from '../utils/errors';
-import type { MemoryImportanceResult } from '../types';
+import { personaService } from './persona.service';
+import type { MemoryImportanceResult, UserPersona } from '../types';
 
 /**
  * LLM 服务
@@ -23,13 +24,23 @@ export class LLMService {
   /**
    * 核心对话接口
    *
+   * @param userId 用户 ID（用于获取人格）
    * @param userMessage 用户消息
    * @param context RAG 上下文（历史记忆）
    * @returns AI 回复
    */
-  async chat(userMessage: string, context: string[]): Promise<string> {
+  async chat(userId: string, userMessage: string, context: string[]): Promise<string> {
     try {
-      const systemPrompt = this.buildSystemPrompt(context);
+      // 获取用户人格
+      let persona = await personaService.getUserPersona(userId);
+
+      // 如果用户没有人格，使用默认人格
+      if (!persona) {
+        persona = personaService.getDefaultPersona(userId);
+      }
+
+      // 构建人格化系统提示
+      const systemPrompt = this.buildPersonaPrompt(persona, context);
 
       const response = await this.openai.chat.completions.create({
         model: this.model,
@@ -124,23 +135,12 @@ export class LLMService {
   }
 
   /**
-   * 构建 System Prompt
+   * 构建人格化系统提示
    *
-   * 将历史记忆注入到上下文中
+   * 使用人格模板渲染
    */
-  private buildSystemPrompt(context: string[]): string {
-    if (context.length === 0) {
-      return `你是一个有帮助的 AI 助手。请根据用户的提问提供准确、有帮助的回答。`;
-    }
-
-    const contextText = context.map((mem, idx) => `${idx + 1}. ${mem}`).join('\n');
-
-    return `你是一个有帮助的 AI 助手。
-
-以下是关于用户的长期记忆，请在回答时参考这些信息：
-${contextText}
-
-请根据用户的提问提供准确、有帮助的回答，并自然地利用这些记忆来个性化你的回复。`;
+  private buildPersonaPrompt(persona: UserPersona, memories: string[]): string {
+    return personaService.renderSystemPrompt(persona, memories);
   }
 }
 

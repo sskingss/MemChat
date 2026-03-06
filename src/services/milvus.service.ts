@@ -2,7 +2,16 @@ import { MilvusClient, DataType, LoadState } from '@zilliz/milvus2-sdk-node';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import { MilvusError } from '../utils/errors';
-import type { Memory, MemoryQueryResult } from '../types';
+import type { Memory, MemoryQueryResult, UserPersona, BootstrapSession } from '../types';
+
+/**
+ * 用户信息接口
+ */
+interface UserInfo {
+  userId: string;
+  username: string;
+  createdAt: number;
+}
 
 /**
  * Milvus 服务层
@@ -34,6 +43,11 @@ export class MilvusService {
   private client: MilvusClient;
   private collectionName: string;
   private dimension: number;
+  private userPersonaCollectionName: string;
+  private bootstrapSessionCollectionName: string;
+
+  // 内存存储 bootstrap sessions（临时数据，无需持久化到 Milvus）
+  private bootstrapSessions: Map<string, BootstrapSession> = new Map();
 
   constructor() {
     this.client = new MilvusClient({
@@ -42,6 +56,20 @@ export class MilvusService {
     });
     this.collectionName = config.milvus.collectionName;
     this.dimension = config.milvus.dimension;
+    this.userPersonaCollectionName = 'user_personas';
+    this.bootstrapSessionCollectionName = 'bootstrap_sessions';
+  }
+
+  /**
+   * 注册或获取用户
+   * userId = username，无需持久化存储
+   */
+  async registerOrGetUser(username: string): Promise<UserInfo> {
+    return {
+      userId: username,
+      username,
+      createdAt: Date.now(),
+    };
   }
 
   /**
@@ -61,74 +89,77 @@ export class MilvusService {
         await this.client.loadCollectionSync({
           collection_name: this.collectionName,
         });
-        return;
+      } else {
+        // 创建 Collection Schema
+        // 【关键隔离设计】user_id 作为 Partition Key
+        const schema = [
+          {
+            name: 'id',
+            description: '记忆唯一标识',
+            data_type: DataType.VarChar,
+            max_length: 36,
+            is_primary_key: true,
+            autoID: false,
+          },
+          {
+            name: 'user_id',
+            description: '用户 ID(Partition Key)',
+            data_type: DataType.VarChar,
+            max_length: 64,
+            is_partition_key: true, // 【核心】设为 Partition Key，强制隔离
+          },
+          {
+            name: 'workspace_id',
+            description: '工作空间 ID',
+            data_type: DataType.VarChar,
+            max_length: 64,
+          },
+          {
+            name: 'content',
+            description: '记忆内容文本',
+            data_type: DataType.VarChar,
+            max_length: 2000,
+          },
+          {
+            name: 'vector',
+            description: '内容向量',
+            data_type: DataType.FloatVector,
+            dim: this.dimension,
+          },
+          {
+            name: 'created_at',
+            description: '创建时间戳',
+            data_type: DataType.Int64,
+          },
+        ];
+
+        // 创建 Collection
+        await this.client.createCollection({
+          collection_name: this.collectionName,
+          fields: schema,
+          enable_dynamic_field: false,
+        });
+
+        // 创建向量索引（IVF_FLAT 索引，适用于中等规模数据）
+        await this.client.createIndex({
+          collection_name: this.collectionName,
+          field_name: 'vector',
+          index_type: 'IVF_FLAT',
+          metric_type: 'L2', // L2 距离（欧氏距离）
+          params: { nlist: 128 },
+        });
+
+        // 加载 Collection 到内存
+        await this.client.loadCollectionSync({
+          collection_name: this.collectionName,
+        });
+
+        console.log(`Collection ${this.collectionName} 创建成功并已加载`);
       }
 
-      // 创建 Collection Schema
-      // 【关键隔离设计】user_id 作为 Partition Key
-      const schema = [
-        {
-          name: 'id',
-          description: '记忆唯一标识',
-          data_type: DataType.VarChar,
-          max_length: 36,
-          is_primary_key: true,
-          autoID: false,
-        },
-        {
-          name: 'user_id',
-          description: '用户 ID（Partition Key）',
-          data_type: DataType.VarChar,
-          max_length: 64,
-          is_partition_key: true, // 【核心】设为 Partition Key，强制隔离
-        },
-        {
-          name: 'workspace_id',
-          description: '工作空间 ID',
-          data_type: DataType.VarChar,
-          max_length: 64,
-        },
-        {
-          name: 'content',
-          description: '记忆内容文本',
-          data_type: DataType.VarChar,
-          max_length: 2000,
-        },
-        {
-          name: 'vector',
-          description: '内容向量',
-          data_type: DataType.FloatVector,
-          dim: this.dimension,
-        },
-        {
-          name: 'created_at',
-          description: '创建时间戳',
-          data_type: DataType.Int64,
-        },
-      ];
-
-      // 创建 Collection
-      await this.client.createCollection({
-        collection_name: this.collectionName,
-        fields: schema,
-        enable_dynamic_field: false,
-      });
-
-      // 创建向量索引（IVF_FLAT 索引，适用于中等规模数据）
-      await this.client.createIndex({
-        collection_name: this.collectionName,
-        field_name: 'vector',
-        index_type: 'IVF_FLAT',
-        metric_type: 'L2', // L2 距离（欧氏距离）
-        params: { nlist: 128 },
-      });
-
-      // 加载 Collection 到内存
-      await this.client.loadCollectionSync({
-        collection_name: this.collectionName,
-      });
-
-      console.log(`Collection ${this.collectionName} 创建成功并已加载`);
+      // 始终初始化 user_personas 和 bootstrap_sessions 集合
+      await this.initUserPersonaCollection();
+      await this.initBootstrapSessionCollection();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new MilvusError(`初始化 Collection 失败: ${message}`);
@@ -372,6 +403,332 @@ export class MilvusService {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new MilvusError(`删除记忆失败: ${message}`);
+    }
+  }
+
+  // ============ User Persona 集合操作 ============
+
+  /**
+   * 初始化 user_personas 集合
+   *
+   * 存储完整的用户人格配置（不再使用 YAML 引用）
+   * 注意：Milvus 要求每个 collection 必须有向量字段，所以添加一个 dummy vector
+   */
+  async initUserPersonaCollection(): Promise<void> {
+    try {
+      const hasCollection = await this.client.hasCollection({
+        collection_name: this.userPersonaCollectionName,
+      });
+
+      if (hasCollection.value) {
+        console.log(`Collection ${this.userPersonaCollectionName} 已存在，跳过创建`);
+        await this.client.loadCollectionSync({
+          collection_name: this.userPersonaCollectionName,
+        });
+        return;
+      }
+
+      // user_personas 集合 Schema - 存储完整人格配置
+      // Milvus 要求必须有向量字段，添加一个 dummy vector (dim=2)
+      const schema = [
+        {
+          name: 'id',
+          description: '人格记录 ID',
+          data_type: DataType.VarChar,
+          max_length: 36,
+          is_primary_key: true,
+          autoID: false,
+        },
+        {
+          name: 'user_id',
+          description: '用户 ID（Partition Key）',
+          data_type: DataType.VarChar,
+          max_length: 64,
+          is_partition_key: true,
+        },
+        // Identity
+        {
+          name: 'ai_name',
+          description: 'AI 昵称',
+          data_type: DataType.VarChar,
+          max_length: 50,
+        },
+        {
+          name: 'user_name',
+          description: '用户昵称',
+          data_type: DataType.VarChar,
+          max_length: 50,
+        },
+        {
+          name: 'relationship',
+          description: '关系定位',
+          data_type: DataType.VarChar,
+          max_length: 100,
+        },
+        // Core Traits
+        {
+          name: 'core_traits',
+          description: '核心特质 (JSON)',
+          data_type: DataType.VarChar,
+          max_length: 2000,
+        },
+        // Communication
+        {
+          name: 'communication_style',
+          description: '沟通风格',
+          data_type: DataType.VarChar,
+          max_length: 500,
+        },
+        {
+          name: 'language',
+          description: '首选语言',
+          data_type: DataType.VarChar,
+          max_length: 20,
+        },
+        // Growth
+        {
+          name: 'lessons_learned',
+          description: '经验教训 (JSON)',
+          data_type: DataType.VarChar,
+          max_length: 2000,
+        },
+        // Dummy vector (required by Milvus)
+        {
+          name: 'dummy_vector',
+          description: 'Dummy vector (required by Milvus)',
+          data_type: DataType.FloatVector,
+          dim: 2,
+        },
+        // Meta
+        {
+          name: 'created_at',
+          description: '创建时间戳',
+          data_type: DataType.Int64,
+        },
+        {
+          name: 'updated_at',
+          description: '更新时间戳',
+          data_type: DataType.Int64,
+        },
+      ];
+
+      await this.client.createCollection({
+        collection_name: this.userPersonaCollectionName,
+        fields: schema,
+        enable_dynamic_field: false,
+      });
+
+      // 创建 dummy vector 索引
+      await this.client.createIndex({
+        collection_name: this.userPersonaCollectionName,
+        field_name: 'dummy_vector',
+        index_type: 'IVF_FLAT',
+        metric_type: 'L2',
+        params: { nlist: 2 },
+      });
+
+      await this.client.loadCollectionSync({
+        collection_name: this.userPersonaCollectionName,
+      });
+
+      console.log(`Collection ${this.userPersonaCollectionName} 创建成功并已加载`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new MilvusError(`初始化 user_personas 集合失败: ${message}`);
+    }
+  }
+
+  /**
+   * 初始化 bootstrap_sessions 集合
+   *
+   * 注意：由于 Milvus 要求每个 collection 必须有向量字段，
+   * 而 bootstrap_sessions 是临时数据，我们改用内存存储。
+   */
+  async initBootstrapSessionCollection(): Promise<void> {
+    // 不再使用 Milvus 存储，改用内存 Map
+    console.log(`Bootstrap sessions will use in-memory storage`);
+  }
+
+  /**
+   * 查询用户的人格配置
+   */
+  async queryUserPersona(userId: string): Promise<UserPersona | null> {
+    try {
+      const expr = `user_id == "${userId}"`;
+      console.log(`[MilvusService] 查询 AI 人格, collection: ${this.userPersonaCollectionName}, expr: ${expr}`);
+
+      const result = await this.client.query({
+        collection_name: this.userPersonaCollectionName,
+        filter: expr,
+        output_fields: [
+          'id', 'user_id', 'ai_name', 'user_name', 'relationship',
+          'core_traits', 'communication_style', 'language',
+          'lessons_learned', 'created_at', 'updated_at'
+        ],
+        limit: 1,
+      });
+
+      console.log('result', result)
+
+      console.log(`[MilvusService] 查询结果: result.data.length = ${result.data?.length || 0}`);
+
+      if (!result.data || result.data.length === 0) {
+        console.log(`[MilvusService] 未找到用户人格数据`);
+        return null;
+      }
+
+      const item = result.data[0];
+      console.log(`[MilvusService] 找到人格数据: id=${item.id}, ai_name=${item.ai_name}, user_id=${item.user_id}`);
+
+      return {
+        id: item.id,
+        userId: item.user_id,
+        aiName: item.ai_name || '',
+        userName: item.user_name || '',
+        relationship: item.relationship || '',
+        coreTraits: item.core_traits ? JSON.parse(item.core_traits) : [],
+        communicationStyle: item.communication_style || '',
+        language: item.language || 'zh',
+        longTermVision: item.long_term_vision || undefined,
+        boundaries: item.boundaries ? JSON.parse(item.boundaries) : undefined,
+        lessonsLearned: item.lessons_learned ? JSON.parse(item.lessons_learned) : [],
+        createdAt: item.created_at,
+        updatedAt: item.updated_at,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`[MilvusService] 查询用户人格失败: ${message}`);
+      throw new MilvusError(`查询用户人格失败: ${message}`);
+    }
+  }
+
+  /**
+   * 保存用户人格配置
+   */
+  async saveUserPersona(persona: UserPersona): Promise<void> {
+    try {
+      const existing = await this.queryUserPersona(persona.userId);
+
+      if (existing) {
+        // 删除旧记录
+        await this.client.deleteEntities({
+          collection_name: this.userPersonaCollectionName,
+          filter: `id == "${existing.id}"`,
+        });
+      }
+
+      // 插入新记录（只包含 schema 定义的字段）
+      await this.client.insert({
+        collection_name: this.userPersonaCollectionName,
+        fields_data: [
+          {
+            id: existing?.id || persona.id,
+            user_id: persona.userId,
+            ai_name: persona.aiName,
+            user_name: persona.userName,
+            relationship: persona.relationship,
+            core_traits: JSON.stringify(persona.coreTraits || []),
+            communication_style: persona.communicationStyle || '',
+            language: persona.language || 'zh',
+            lessons_learned: JSON.stringify(persona.lessonsLearned || []),
+            dummy_vector: [1.0, 0.0],
+            created_at: existing?.createdAt || persona.createdAt || Date.now(),
+            updated_at: Date.now(),
+          },
+        ],
+      });
+      console.log(`[MilvusService] 保存用户人格成功: id=${persona.id}, user_id=${persona.userId}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new MilvusError(`保存用户人格失败: ${message}`);
+    }
+  }
+
+  /**
+   * 删除用户人格
+   */
+  async deleteUserPersona(userId: string): Promise<boolean> {
+    try {
+      const existing = await this.queryUserPersona(userId);
+      if (!existing) {
+        return false;
+      }
+
+      await this.client.deleteEntities({
+        collection_name: this.userPersonaCollectionName,
+        filter: `id == "${existing.id}"`,
+      });
+
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new MilvusError(`删除用户人格失败: ${message}`);
+    }
+  }
+
+  // ============ Bootstrap Session 操作（使用内存存储）============
+
+  /**
+   * 创建新的引导会话
+   */
+  async createBootstrapSession(userId: string): Promise<BootstrapSession> {
+    const session: BootstrapSession = {
+      id: uuidv4(),
+      userId,
+      phase: 1,
+      extractedData: {},
+      conversationHistory: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    this.bootstrapSessions.set(session.id, session);
+    return session;
+  }
+
+  /**
+   * 获取引导会话
+   */
+  async getBootstrapSession(sessionId: string, userId: string): Promise<BootstrapSession | null> {
+    const session = this.bootstrapSessions.get(sessionId);
+    if (!session || session.userId !== userId) {
+      return null;
+    }
+    return session;
+  }
+
+  /**
+   * 获取用户最新的引导会话
+   */
+  async getLatestBootstrapSession(userId: string): Promise<BootstrapSession | null> {
+    let latestSession: BootstrapSession | null = null;
+
+    for (const session of this.bootstrapSessions.values()) {
+      if (session.userId === userId) {
+        if (!latestSession || session.updatedAt > latestSession.updatedAt) {
+          latestSession = session;
+        }
+      }
+    }
+
+    return latestSession;
+  }
+
+  /**
+   * 更新引导会话
+   */
+  async updateBootstrapSession(session: BootstrapSession): Promise<void> {
+    session.updatedAt = Date.now();
+    this.bootstrapSessions.set(session.id, session);
+  }
+
+  /**
+   * 删除引导会话
+   */
+  async deleteBootstrapSession(sessionId: string, userId: string): Promise<void> {
+    const session = this.bootstrapSessions.get(sessionId);
+    if (session && session.userId === userId) {
+      this.bootstrapSessions.delete(sessionId);
     }
   }
 }
