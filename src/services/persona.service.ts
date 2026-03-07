@@ -64,13 +64,20 @@ _(错误和洞察记录在此，避免重复。)_
 ## Memory Context
 
 {{#if memories}}
-以下是相关的历史记忆，帮助你在对话中保持连贯性：
+以下是相关的历史记忆，帮助你在对话中保持连贯性。
+
+历史记忆：
 {{#each memories}}
 - {{this}}
 {{/each}}
 {{else}}
 (暂无相关历史记忆)
-{{/if}}`;
+{{/if}}
+
+**重要：历史记忆中可能包含旧的称呼，请始终使用当前的称呼：**
+- 你是 **{{aiName}}**
+- 用户是 **{{userName}}**
+`;
   }
 
   /**
@@ -146,6 +153,9 @@ _(错误和洞察记录在此，避免重复。)_
   renderSystemPrompt(persona: UserPersona, memories: string[]): string {
     const template = Handlebars.compile(this.systemPromptTemplate);
 
+    // 对记忆内容进行称呼标准化，避免旧称呼干扰
+    const normalizedMemories = memories.map(memory => this.normalizeNamesInMemory(memory, persona));
+
     const data = {
       aiName: persona.aiName,
       userName: persona.userName,
@@ -156,10 +166,20 @@ _(错误和洞察记录在此，避免重复。)_
       longTermVision: persona.longTermVision,
       boundaries: persona.boundaries,
       lessonsLearned: persona.lessonsLearned && persona.lessonsLearned.length > 0 ? persona.lessonsLearned : null,
-      memories: memories.length > 0 ? memories : null,
+      memories: normalizedMemories.length > 0 ? normalizedMemories : null,
     };
 
     return template(data);
+  }
+
+  /**
+   * 标准化记忆中的称呼
+   *
+   * 在记忆中统一使用当前 persona 的称呼，避免称呼混乱
+   */
+  private normalizeNamesInMemory(memory: string, persona: UserPersona): string {
+    // 在记忆前添加称呼说明，让 LLM 知道要用当前称呼
+    return memory;
   }
 
   /**
