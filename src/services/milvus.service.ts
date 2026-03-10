@@ -272,6 +272,79 @@ export class MilvusService {
   }
 
   /**
+   * 检索相似记忆（带相似度阈值过滤）
+   *
+   * @param threshold L2 距离阈值，越小越相似（默认 1.0）
+   */
+  async searchSimilarMemoriesWithThreshold(
+    userId: string,
+    workspaceId: string,
+    queryVector: number[],
+    topK: number = 5,
+    threshold: number = 1.0
+  ): Promise<MemoryQueryResult[]> {
+    const results = await this.searchSimilarMemories(userId, workspaceId, queryVector, topK);
+
+    // 过滤掉相似度太低的结果（L2 距离越小越相似）
+    const filtered = results.filter(r => r.score < threshold);
+    console.log(`[Milvus] 相似记忆过滤: ${results.length} -> ${filtered.length} (threshold: ${threshold})`);
+    return filtered;
+  }
+
+  /**
+   * 批量删除记忆并创建合并后的新记忆
+   *
+   * 用于 MERGE 操作：删除多条旧记忆，创建一条合并后的新记忆
+   */
+  async mergeMemories(
+    userId: string,
+    workspaceId: string,
+    memoryIds: string[],
+    mergedContent: string,
+    mergedVector: number[]
+  ): Promise<string> {
+    if (!userId || !workspaceId || memoryIds.length === 0 || !mergedContent) {
+      throw new MilvusError('mergeMemories 参数无效');
+    }
+
+    try {
+      // 1. 验证所有记忆都属于当前用户
+      const idsExpr = memoryIds.map(id => `"${id}"`).join(', ');
+      const expr = `user_id == "${userId}" && workspace_id == "${workspaceId}" && id in [${idsExpr}]`;
+
+      const existingMemories = await this.client.query({
+        collection_name: this.collectionName,
+        filter: expr,
+        output_fields: ['id'],
+      });
+
+      if (!existingMemories.data || existingMemories.data.length !== memoryIds.length) {
+        console.warn(`[Milvus] 合并验证失败: 期望 ${memoryIds.length} 条，找到 ${existingMemories.data?.length || 0} 条`);
+        throw new MilvusError('部分记忆不存在或不属于当前用户');
+      }
+
+      // 2. 删除所有旧记忆
+      for (const id of memoryIds) {
+        await this.client.deleteEntities({
+          collection_name: this.collectionName,
+          filter: `id == "${id}"`,
+        });
+      }
+
+      console.log(`[Milvus] 已删除 ${memoryIds.length} 条旧记忆`);
+
+      // 3. 创建合并后的新记忆
+      const newId = await this.insertMemory(userId, workspaceId, mergedContent, mergedVector);
+
+      console.log(`[Milvus] 合并完成: ${memoryIds.length} 条记忆 -> 新记忆 ${newId}`);
+      return newId;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new MilvusError(`合并记忆失败: ${message}`);
+    }
+  }
+
+  /**
    * 获取用户在某个 workspace 下的所有记忆
    *
    * 【隔离保证】强制过滤 user_id 和 workspace_id

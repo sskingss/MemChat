@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { config } from '../config';
 import { LLMError } from '../utils/errors';
 import { personaService } from './persona.service';
-import type { MemoryImportanceResult, UserPersona } from '../types';
+import type { MemoryImportanceResult, UserPersona, SimilarMemoryContext, MemoryUpdateDecision } from '../types';
 
 /**
  * LLM 服务
@@ -130,6 +130,89 @@ export class LLMService {
       return {
         isImportant: false,
         reason: '判断过程出错',
+      };
+    }
+  }
+
+  /**
+   * 判断新记忆是否需要与已有记忆合并/更新
+   *
+   * @param newSummary 新记忆摘要
+   * @param similarMemories 相似的已有记忆列表
+   * @returns 更新决策（create/update/merge）
+   */
+  async evaluateMemoryUpdate(
+    newSummary: string,
+    similarMemories: SimilarMemoryContext[]
+  ): Promise<MemoryUpdateDecision> {
+    // 如果没有相似记忆，直接创建
+    if (similarMemories.length === 0) {
+      return {
+        action: 'create',
+        reason: '没有找到相似记忆',
+        newContent: newSummary,
+      };
+    }
+
+    const prompt = `你是一个记忆管理助手。请分析新的记忆摘要是否需要与已有的相似记忆合并或更新。
+
+【新的记忆摘要】
+${newSummary}
+
+【已有的相似记忆】
+${similarMemories.map((m, i) => `[${i + 1}] ID: ${m.id}
+内容: ${m.content}
+相似度: ${(1 - m.score / 10).toFixed(2)}`).join('\n\n')}
+
+请判断：
+1. 新记忆与已有记忆是否属于"同一主题"？
+2. 如果是同一主题，应该：
+   - UPDATE: 更新某条记忆（如补充新信息、修正错误）
+   - MERGE: 合并多条记忆（如果信息分散在多条记忆中）
+   - CREATE: 创建新记忆（虽然主题相似但信息不同）
+
+判断标准：
+- 同一主题：讨论同一件事、同一个人、同一个偏好设置等
+- 需要UPDATE：新信息补充或修正了已有记忆
+- 需要MERGE：多条记忆讨论同一件事，但信息分散
+- 需要CREATE：主题相关但信息独立，不应合并
+
+请以 JSON 格式返回：
+{
+  "action": "create" | "update" | "merge",
+  "reason": "判断原因",
+  "targetMemoryId": "需要更新的记忆ID（action=update时）",
+  "targetMemoryIds": ["需要合并的记忆ID数组（action=merge时）"],
+  "updatedContent": "更新后的内容（action=update时）",
+  "mergedContent": "合并后的内容（action=merge时）",
+  "newContent": "新记忆内容（action=create时）"
+}
+
+只返回 JSON，不要包含其他内容。`;
+
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 2048,
+        response_format: { type: 'json_object' },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new LLMError('记忆更新判断返回格式异常');
+      }
+
+      const result = JSON.parse(content) as MemoryUpdateDecision;
+      console.log(`[LLM] 记忆更新决策: ${result.action}, 原因: ${result.reason}`);
+      return result;
+    } catch (error) {
+      console.error('[LLM] 记忆更新判断失败:', error);
+      // Fail-safe: 默认创建新记忆
+      return {
+        action: 'create',
+        reason: '判断过程出错，默认创建新记忆',
+        newContent: newSummary,
       };
     }
   }

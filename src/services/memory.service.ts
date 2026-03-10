@@ -2,22 +2,29 @@ import { milvusService } from './milvus.service';
 import { embeddingService } from './embedding.service';
 import { llmService } from './llm.service';
 import { chunkingService } from './chunking.service';
+import type { MemoryUpdateDecision, MemoryUpdateResult, SimilarMemoryContext } from '../types';
+
+// 配置常量
+const SIMILARITY_THRESHOLD = 1.0; // L2 距离阈值（越小越相似）
+const MAX_SIMILAR_MEMORIES = 3;   // 最多检索的相似记忆数
 
 /**
  * 记忆管理服务
  *
  * 负责：
  * 1. 判断对话信息是否值得存储为长期记忆
- * 2. 如果值得，提取摘要并存储到 Milvus
+ * 2. 智能更新：相似记忆检索 → LLM 决策 → 创建/更新/合并
  */
 export class MemoryService {
   /**
-   * 处理对话后的记忆存储
+   * 处理对话后的记忆存储（智能更新版本）
    *
    * 流程：
    * 1. 调用 LLM 判断重要性
-   * 2. 如果重要，生成摘要并向量化
-   * 3. 存储到 Milvus（强制绑定 userId 和 workspaceId）
+   * 2. 如果重要，生成摘要
+   * 3. 检索相似记忆
+   * 4. LLM 判断是否需要合并/更新
+   * 5. 执行相应的存储/更新/合并操作
    *
    * @returns 是否存储了记忆
    */
@@ -39,36 +46,178 @@ export class MemoryService {
         return false;
       }
 
-      // 2. 使用 Chunking 策略处理长文本
       const summary = importance.summary;
-      const chunks = chunkingService.chunkText(summary);
-      const stats = chunkingService.getChunkStats(chunks);
 
-      console.log(`[Memory] Chunking summary into ${stats.chunks} chunks (avg ${stats.avgTokens.toFixed(0)} tokens)`);
+      // 2. 生成向量并检索相似记忆
+      const summaryVector = await embeddingService.generateEmbedding(summary);
 
-      // 3. 为每个 chunk 生成向量并存储
-      let storedCount = 0;
-      for (const chunk of chunks) {
-        const vector = await embeddingService.generateEmbedding(chunk);
+      const similarMemories = await milvusService.searchSimilarMemoriesWithThreshold(
+        userId,
+        workspaceId,
+        summaryVector,
+        MAX_SIMILAR_MEMORIES,
+        SIMILARITY_THRESHOLD
+      );
 
-        // 【隔离保证】userId 和 workspaceId 强制绑定
-        const memoryId = await milvusService.insertMemory(
-          userId,
-          workspaceId,
-          chunk,
-          vector
-        );
+      console.log(`[Memory] 找到 ${similarMemories.length} 条相似记忆`);
 
-        storedCount++;
-        console.log(`[Memory] Stored chunk ${storedCount}/${stats.chunks}: ${chunk.substring(0, 50)}...`);
-      }
+      // 3. 转换为 LLM 需要的格式
+      const similarContext: SimilarMemoryContext[] = similarMemories.map(m => ({
+        id: m.id,
+        content: m.content,
+        score: m.score,
+      }));
 
-      console.log(`[Memory] 完成存储 ${storedCount} 个记忆 chunks`);
+      // 4. LLM 判断更新策略
+      const decision = await llmService.evaluateMemoryUpdate(summary, similarContext);
+
+      console.log(`[Memory] 决策: ${decision.action}, 原因: ${decision.reason}`);
+
+      // 5. 执行相应的操作
+      const result = await this.executeMemoryDecision(
+        userId,
+        workspaceId,
+        decision,
+        summaryVector
+      );
+
+      console.log(`[Memory] 执行结果: ${result.action}, IDs: ${result.memoryIds.join(', ')}`);
       return true;
     } catch (error) {
-      // 记忆存储失败不应该影响主流程
       console.error('[Memory] 存储记忆失败:', error);
       return false;
+    }
+  }
+
+  /**
+   * 执行记忆更新决策
+   */
+  private async executeMemoryDecision(
+    userId: string,
+    workspaceId: string,
+    decision: MemoryUpdateDecision,
+    vector: number[]
+  ): Promise<MemoryUpdateResult> {
+    switch (decision.action) {
+      case 'create': {
+        // 分块并创建新记忆
+        const content = decision.newContent || '';
+        const chunks = chunkingService.chunkText(content);
+        const stats = chunkingService.getChunkStats(chunks);
+        const memoryIds: string[] = [];
+
+        console.log(`[Memory] 创建新记忆: ${stats.chunks} chunks`);
+
+        for (const chunk of chunks) {
+          const chunkVector = await embeddingService.generateEmbedding(chunk);
+          const id = await milvusService.insertMemory(userId, workspaceId, chunk, chunkVector);
+          memoryIds.push(id);
+        }
+
+        return {
+          action: 'created',
+          memoryIds,
+          reason: decision.reason,
+        };
+      }
+
+      case 'update': {
+        if (!decision.targetMemoryId || !decision.updatedContent) {
+          console.error('[Memory] UPDATE 操作缺少必要参数，降级为创建');
+          // 降级为创建新记忆
+          return this.executeMemoryDecision(userId, workspaceId, {
+            action: 'create',
+            reason: 'UPDATE 参数缺失，降级为创建',
+            newContent: decision.updatedContent || decision.newContent || '',
+          }, vector);
+        }
+
+        console.log(`[Memory] 更新记忆: ${decision.targetMemoryId}`);
+
+        const updatedVector = await embeddingService.generateEmbedding(decision.updatedContent);
+        const success = await milvusService.updateMemory(
+          userId,
+          decision.targetMemoryId,
+          decision.updatedContent,
+          updatedVector
+        );
+
+        if (!success) {
+          // 更新失败，降级为创建新记忆
+          console.warn('[Memory] 更新失败，降级为创建新记忆');
+          const id = await milvusService.insertMemory(
+            userId,
+            workspaceId,
+            decision.updatedContent,
+            updatedVector
+          );
+          return {
+            action: 'created',
+            memoryIds: [id],
+            reason: '更新失败，降级为创建新记忆',
+          };
+        }
+
+        return {
+          action: 'updated',
+          memoryIds: [decision.targetMemoryId],
+          reason: decision.reason,
+        };
+      }
+
+      case 'merge': {
+        if (!decision.targetMemoryIds || decision.targetMemoryIds.length === 0 || !decision.mergedContent) {
+          console.error('[Memory] MERGE 操作缺少必要参数，降级为创建');
+          return this.executeMemoryDecision(userId, workspaceId, {
+            action: 'create',
+            reason: 'MERGE 参数缺失，降级为创建',
+            newContent: decision.mergedContent || decision.newContent || '',
+          }, vector);
+        }
+
+        console.log(`[Memory] 合并记忆: ${decision.targetMemoryIds.join(', ')}`);
+
+        const mergedVector = await embeddingService.generateEmbedding(decision.mergedContent);
+
+        try {
+          const newId = await milvusService.mergeMemories(
+            userId,
+            workspaceId,
+            decision.targetMemoryIds,
+            decision.mergedContent,
+            mergedVector
+          );
+
+          return {
+            action: 'merged',
+            memoryIds: [newId],
+            reason: decision.reason,
+          };
+        } catch (error) {
+          // 合并失败，降级为创建新记忆
+          console.error('[Memory] 合并失败，降级为创建新记忆:', error);
+          const id = await milvusService.insertMemory(
+            userId,
+            workspaceId,
+            decision.mergedContent,
+            mergedVector
+          );
+          return {
+            action: 'created',
+            memoryIds: [id],
+            reason: '合并失败，降级为创建新记忆',
+          };
+        }
+      }
+
+      default:
+        // 未知的操作类型，降级为创建
+        console.error(`[Memory] 未知的操作类型: ${(decision as any).action}`);
+        return this.executeMemoryDecision(userId, workspaceId, {
+          action: 'create',
+          reason: '未知操作类型，降级为创建',
+          newContent: decision.newContent || '',
+        }, vector);
     }
   }
 
