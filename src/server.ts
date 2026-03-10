@@ -3,6 +3,7 @@ import { config, validateConfig } from './config';
 import { milvusService } from './services/milvus.service';
 import { embeddingService } from './services/embedding.service';
 import { personaService } from './services/persona.service';
+import { cleanupService } from './services/cleanup.service';
 
 /**
  * 服务启动入口
@@ -12,7 +13,8 @@ import { personaService } from './services/persona.service';
  * 2. 预加载 Embedding 模型
  * 3. 初始化 Milvus Collection
  * 4. 初始化人格系统
- * 5. 启动 Express 服务器
+ * 5. 启动清理服务
+ * 6. 启动 Express 服务器
  */
 async function startServer() {
   try {
@@ -32,7 +34,11 @@ async function startServer() {
     console.log('[Startup] 初始化人格系统...');
     await personaService.init();
 
-    // 5. 启动服务器
+    // 5. 启动清理服务（清理过期待办事项）
+    console.log('[Startup] 启动清理服务...');
+    cleanupService.start();
+
+    // 6. 启动服务器
     app.listen(config.port, () => {
       console.log(`[Startup] 服务器启动成功！`);
       console.log(`[Startup] 环境: ${config.nodeEnv}`);

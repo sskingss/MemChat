@@ -2,7 +2,7 @@ import { milvusService } from './milvus.service';
 import { embeddingService } from './embedding.service';
 import { llmService } from './llm.service';
 import { chunkingService } from './chunking.service';
-import type { MemoryUpdateDecision, MemoryUpdateResult, SimilarMemoryContext } from '../types';
+import type { MemoryUpdateDecision, MemoryUpdateResult, SimilarMemoryContext, MemoryType } from '../types';
 
 // 配置常量
 const SIMILARITY_THRESHOLD = 1.0; // L2 距离阈值（越小越相似）
@@ -47,6 +47,10 @@ export class MemoryService {
       }
 
       const summary = importance.summary;
+      const memoryType: MemoryType = importance.memoryType || 'general';
+      const expiresAt: number = importance.expiresAt || 0;
+
+      console.log(`[Memory] 记忆类型: ${memoryType}, 过期时间: ${expiresAt || 'never'}`);
 
       // 2. 生成向量并检索相似记忆
       const summaryVector = await embeddingService.generateEmbedding(summary);
@@ -78,7 +82,9 @@ export class MemoryService {
         userId,
         workspaceId,
         decision,
-        summaryVector
+        summaryVector,
+        memoryType,
+        expiresAt
       );
 
       console.log(`[Memory] 执行结果: ${result.action}, IDs: ${result.memoryIds.join(', ')}`);
@@ -96,7 +102,9 @@ export class MemoryService {
     userId: string,
     workspaceId: string,
     decision: MemoryUpdateDecision,
-    vector: number[]
+    vector: number[],
+    memoryType: MemoryType = 'general',
+    expiresAt: number = 0
   ): Promise<MemoryUpdateResult> {
     switch (decision.action) {
       case 'create': {
@@ -106,11 +114,11 @@ export class MemoryService {
         const stats = chunkingService.getChunkStats(chunks);
         const memoryIds: string[] = [];
 
-        console.log(`[Memory] 创建新记忆: ${stats.chunks} chunks`);
+        console.log(`[Memory] 创建新记忆: ${stats.chunks} chunks, type=${memoryType}`);
 
         for (const chunk of chunks) {
           const chunkVector = await embeddingService.generateEmbedding(chunk);
-          const id = await milvusService.insertMemory(userId, workspaceId, chunk, chunkVector);
+          const id = await milvusService.insertMemory(userId, workspaceId, chunk, chunkVector, memoryType, expiresAt);
           memoryIds.push(id);
         }
 
@@ -129,7 +137,7 @@ export class MemoryService {
             action: 'create',
             reason: 'UPDATE 参数缺失，降级为创建',
             newContent: decision.updatedContent || decision.newContent || '',
-          }, vector);
+          }, vector, memoryType, expiresAt);
         }
 
         console.log(`[Memory] 更新记忆: ${decision.targetMemoryId}`);
@@ -149,7 +157,9 @@ export class MemoryService {
             userId,
             workspaceId,
             decision.updatedContent,
-            updatedVector
+            updatedVector,
+            memoryType,
+            expiresAt
           );
           return {
             action: 'created',
@@ -172,7 +182,7 @@ export class MemoryService {
             action: 'create',
             reason: 'MERGE 参数缺失，降级为创建',
             newContent: decision.mergedContent || decision.newContent || '',
-          }, vector);
+          }, vector, memoryType, expiresAt);
         }
 
         console.log(`[Memory] 合并记忆: ${decision.targetMemoryIds.join(', ')}`);
@@ -200,7 +210,9 @@ export class MemoryService {
             userId,
             workspaceId,
             decision.mergedContent,
-            mergedVector
+            mergedVector,
+            memoryType,
+            expiresAt
           );
           return {
             action: 'created',
@@ -217,7 +229,7 @@ export class MemoryService {
           action: 'create',
           reason: '未知操作类型，降级为创建',
           newContent: decision.newContent || '',
-        }, vector);
+        }, vector, memoryType, expiresAt);
     }
   }
 

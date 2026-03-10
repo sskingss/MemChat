@@ -3,6 +3,9 @@ export interface UserContext {
   userId: string;
 }
 
+// 记忆类型
+export type MemoryType = 'general' | 'todo';
+
 // Milvus 记忆数据结构
 export interface Memory {
   id: string;
@@ -11,6 +14,8 @@ export interface Memory {
   content: string;
   vector: number[];
   createdAt: Date;
+  memoryType: MemoryType; // 记忆类型
+  expiresAt: number; // 过期时间戳（毫秒），0 表示永不过期
 }
 
 // Milvus 查询结果（未反序列化的向量）
@@ -40,6 +45,8 @@ export interface MemoryImportanceResult {
   isImportant: boolean;
   summary?: string; // 可选：对重要信息的摘要
   reason?: string; // 为什么重要
+  memoryType?: MemoryType; // 记忆类型：general 或 todo
+  expiresAt?: number; // 过期时间戳（毫秒），0 表示永不过期
 }
 
 // 相似记忆上下文（用于 LLM 判断）

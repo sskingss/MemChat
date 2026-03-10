@@ -81,17 +81,29 @@ export class LLMService {
     assistantReply: string
   ): Promise<MemoryImportanceResult> {
     try {
+      const now = new Date();
+      const currentDateTime = now.toISOString();
+
       const prompt = `你是一个记忆重要性判断助手。请分析以下对话，判断是否包含值得长期存储的重要信息。
 
 对话内容：
 用户: ${userMessage}
 助手: ${assistantReply}
 
+当前日期时间: ${currentDateTime}
+
 判断标准：
 1. 是否包含用户的个人偏好、习惯、重要背景信息？
 2. 是否包含重要的决策或约定？
 3. 是否包含需要在未来对话中记住的事实信息？
 4. 是否包含用户的情感状态或重要经历？
+5. 是否包含待办事项、任务、提醒或截止日期？
+
+待办事项识别：
+- 如果对话包含任务、待办、提醒、截止日期等，应标记为 todo 类型
+- 提取具体的截止日期或过期时间（如"明天"、"下周五"、"3月15日"等）
+- 将相对时间转换为绝对时间戳（毫秒）
+- 如果没有明确的过期时间，根据任务性质设置合理的默认过期时间
 
 如果只是简单的问答、临时性问题、或者不包含个人化信息，则不需要存储。
 
@@ -99,7 +111,9 @@ export class LLMService {
 {
   "isImportant": true/false,
   "summary": "重要信息的简短摘要（如果 isImportant 为 true）",
-  "reason": "判断为重要/不重要的原因"
+  "reason": "判断为重要/不重要的原因",
+  "memoryType": "general" | "todo",
+  "expiresAt": 过期时间戳（毫秒，0表示永不过期，todo类型建议设置具体过期时间）
 }
 
 只返回 JSON，不要包含其他内容。`;
@@ -113,6 +127,7 @@ export class LLMService {
           },
         ],
         max_tokens: 1024,
+        response_format: { type: 'json_object' },
       });
 
       const content = response.choices[0]?.message?.content;
@@ -122,6 +137,14 @@ export class LLMService {
 
       // 解析 JSON
       const result = JSON.parse(content) as MemoryImportanceResult;
+
+      // 确保 memoryType 和 expiresAt 有默认值
+      if (!result.memoryType) {
+        result.memoryType = 'general';
+      }
+      if (result.expiresAt === undefined) {
+        result.expiresAt = 0;
+      }
 
       return result;
     } catch (error) {

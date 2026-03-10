@@ -2,7 +2,7 @@ import { MilvusClient, DataType, LoadState } from '@zilliz/milvus2-sdk-node';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import { MilvusError } from '../utils/errors';
-import type { Memory, MemoryQueryResult, UserPersona, BootstrapSession } from '../types';
+import type { Memory, MemoryQueryResult, UserPersona, BootstrapSession, MemoryType } from '../types';
 
 /**
  * 用户信息接口
@@ -85,76 +85,26 @@ export class MilvusService {
       });
 
       if (hasCollection.value) {
-        console.log(`Collection ${this.collectionName} 已存在，跳过创建`);
-        await this.client.loadCollectionSync({
+        console.log(`Collection ${this.collectionName} 已存在`);
+
+        // 检查是否支持动态字段
+        const collectionInfo = await this.client.describeCollection({
           collection_name: this.collectionName,
         });
+
+        const enableDynamicField = collectionInfo.schema.enable_dynamic_field;
+        console.log(`[Milvus] 动态字段状态: ${enableDynamicField}`);
+
+        if (!enableDynamicField) {
+          console.log(`[Milvus] Collection 不支持动态字段，需要重建...`);
+          await this.recreateCollection();
+        } else {
+          await this.client.loadCollectionSync({
+            collection_name: this.collectionName,
+          });
+        }
       } else {
-        // 创建 Collection Schema
-        // 【关键隔离设计】user_id 作为 Partition Key
-        const schema = [
-          {
-            name: 'id',
-            description: '记忆唯一标识',
-            data_type: DataType.VarChar,
-            max_length: 36,
-            is_primary_key: true,
-            autoID: false,
-          },
-          {
-            name: 'user_id',
-            description: '用户 ID(Partition Key)',
-            data_type: DataType.VarChar,
-            max_length: 64,
-            is_partition_key: true, // 【核心】设为 Partition Key，强制隔离
-          },
-          {
-            name: 'workspace_id',
-            description: '工作空间 ID',
-            data_type: DataType.VarChar,
-            max_length: 64,
-          },
-          {
-            name: 'content',
-            description: '记忆内容文本',
-            data_type: DataType.VarChar,
-            max_length: 2000,
-          },
-          {
-            name: 'vector',
-            description: '内容向量',
-            data_type: DataType.FloatVector,
-            dim: this.dimension,
-          },
-          {
-            name: 'created_at',
-            description: '创建时间戳',
-            data_type: DataType.Int64,
-          },
-        ];
-
-        // 创建 Collection
-        await this.client.createCollection({
-          collection_name: this.collectionName,
-          fields: schema,
-          enable_dynamic_field: false,
-        });
-
-        // 创建向量索引（IVF_FLAT 索引，适用于中等规模数据）
-        await this.client.createIndex({
-          collection_name: this.collectionName,
-          field_name: 'vector',
-          index_type: 'IVF_FLAT',
-          metric_type: 'L2', // L2 距离（欧氏距离）
-          params: { nlist: 128 },
-        });
-
-        // 加载 Collection 到内存
-        await this.client.loadCollectionSync({
-          collection_name: this.collectionName,
-        });
-
-        console.log(`Collection ${this.collectionName} 创建成功并已加载`);
+        await this.createMemoryCollection();
       }
 
       // 始终初始化 user_personas 和 bootstrap_sessions 集合
@@ -167,16 +117,122 @@ export class MilvusService {
   }
 
   /**
+   * 创建记忆 Collection（启用动态字段）
+   */
+  private async createMemoryCollection(): Promise<void> {
+    // 创建 Collection Schema
+    // 【关键隔离设计】user_id 作为 Partition Key
+    const schema = [
+      {
+        name: 'id',
+        description: '记忆唯一标识',
+        data_type: DataType.VarChar,
+        max_length: 36,
+        is_primary_key: true,
+        autoID: false,
+      },
+      {
+        name: 'user_id',
+        description: '用户 ID(Partition Key)',
+        data_type: DataType.VarChar,
+        max_length: 64,
+        is_partition_key: true, // 【核心】设为 Partition Key，强制隔离
+      },
+      {
+        name: 'workspace_id',
+        description: '工作空间 ID',
+        data_type: DataType.VarChar,
+        max_length: 64,
+      },
+      {
+        name: 'content',
+        description: '记忆内容文本',
+        data_type: DataType.VarChar,
+        max_length: 2000,
+      },
+      {
+        name: 'vector',
+        description: '内容向量',
+        data_type: DataType.FloatVector,
+        dim: this.dimension,
+      },
+      {
+        name: 'created_at',
+        description: '创建时间戳',
+        data_type: DataType.Int64,
+      },
+    ];
+
+    // 创建 Collection
+    await this.client.createCollection({
+      collection_name: this.collectionName,
+      fields: schema,
+      enable_dynamic_field: true, // 启用动态字段，支持 memory_type 和 expires_at
+    });
+
+    // 创建向量索引（IVF_FLAT 索引，适用于中等规模数据）
+    await this.client.createIndex({
+      collection_name: this.collectionName,
+      field_name: 'vector',
+      index_type: 'IVF_FLAT',
+      metric_type: 'L2', // L2 距离（欧氏距离）
+      params: { nlist: 128 },
+    });
+
+    // 加载 Collection 到内存
+    await this.client.loadCollectionSync({
+      collection_name: this.collectionName,
+    });
+
+    console.log(`Collection ${this.collectionName} 创建成功并已加载`);
+  }
+
+  /**
+   * 重建 Collection（删除旧 collection 并创建新的）
+   *
+   * 注意：这会丢失所有数据！仅用于开发环境或首次升级时
+   */
+  private async recreateCollection(): Promise<void> {
+    console.log(`[Milvus] 正在删除旧的 Collection ${this.collectionName}...`);
+
+    // 先释放 collection
+    try {
+      await this.client.releaseCollection({
+        collection_name: this.collectionName,
+      });
+    } catch (error) {
+      // 忽略释放失败的错误
+    }
+
+    // 删除 collection
+    await this.client.dropCollection({
+      collection_name: this.collectionName,
+    });
+
+    console.log(`[Milvus] 旧 Collection 已删除，正在创建新的 Collection...`);
+
+    // 创建新的 collection
+    await this.createMemoryCollection();
+
+    console.log(`[Milvus] Collection 重建完成（支持动态字段）`);
+  }
+
+  /**
    * 插入记忆
    *
    * 【隔离保证】强制接收 userId，写入时自动带有 user_id 字段
    * 即使恶意调用此方法，也无法伪造其他用户的记忆
+   *
+   * @param memoryType 记忆类型：general 或 todo
+   * @param expiresAt 过期时间戳（毫秒），0 表示永不过期
    */
   async insertMemory(
     userId: string, // 【强制参数】确保调用者必须提供 userId
     workspaceId: string,
     content: string,
-    vector: number[]
+    vector: number[],
+    memoryType: MemoryType = 'general',
+    expiresAt: number = 0
   ): Promise<string> {
     // 参数校验
     if (!userId || !workspaceId || !content || vector.length !== this.dimension) {
@@ -197,11 +253,15 @@ export class MilvusService {
             content,
             vector,
             created_at: createdAt,
+            // 动态字段
+            memory_type: memoryType,
+            expires_at: expiresAt,
           },
         ],
       });
 
       console.log('[Milvus] Insert result:', JSON.stringify(result, null, 2));
+      console.log(`[Milvus] 插入记忆: id=${memoryId}, type=${memoryType}, expiresAt=${expiresAt || 'never'}`);
       return memoryId;
     } catch (error) {
       console.error('[Milvus] Insert error:', error);
@@ -476,6 +536,48 @@ export class MilvusService {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new MilvusError(`删除记忆失败: ${message}`);
+    }
+  }
+
+  /**
+   * 清理过期的记忆
+   *
+   * 删除所有 expires_at > 0 && expires_at < now 的记录
+   * @returns 删除的记忆数量
+   */
+  async deleteExpiredMemories(): Promise<number> {
+    try {
+      const now = Date.now();
+
+      // 查询所有过期的记忆
+      const expr = `expires_at > 0 && expires_at < ${now}`;
+
+      const expiredMemories = await this.client.query({
+        collection_name: this.collectionName,
+        filter: expr,
+        output_fields: ['id', 'content', 'memory_type', 'expires_at'],
+      });
+
+      if (!expiredMemories.data || expiredMemories.data.length === 0) {
+        console.log('[Milvus] 没有过期的记忆需要清理');
+        return 0;
+      }
+
+      const count = expiredMemories.data.length;
+      console.log(`[Milvus] 发现 ${count} 条过期记忆，开始清理...`);
+
+      // 删除过期的记忆
+      await this.client.deleteEntities({
+        collection_name: this.collectionName,
+        filter: expr,
+      });
+
+      console.log(`[Milvus] 已清理 ${count} 条过期记忆`);
+      return count;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`[Milvus] 清理过期记忆失败: ${message}`);
+      throw new MilvusError(`清理过期记忆失败: ${message}`);
     }
   }
 
