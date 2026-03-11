@@ -2,6 +2,7 @@ import { milvusService } from './milvus.service';
 import { embeddingService } from './embedding.service';
 import { llmService } from './llm.service';
 import { chunkingService } from './chunking.service';
+import { memoryCleanupService } from './memory-cleanup.service';
 import type { MemoryUpdateDecision, MemoryUpdateResult, SimilarMemoryContext, MemoryType } from '../types';
 
 // 配置常量
@@ -88,6 +89,12 @@ export class MemoryService {
       );
 
       console.log(`[Memory] 执行结果: ${result.action}, IDs: ${result.memoryIds.join(', ')}`);
+
+      // 6. 异步检查是否需要清理（不阻塞主流程）
+      memoryCleanupService.checkAndCleanup(userId).catch(err => {
+        console.error('[Memory] 清理检查失败:', err);
+      });
+
       return true;
     } catch (error) {
       console.error('[Memory] 存储记忆失败:', error);

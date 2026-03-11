@@ -34,6 +34,18 @@ export const config = {
     maxTokensPerChunk: parseInt(process.env.CHUNK_MAX_TOKENS || '400', 10),
     overlapTokens: parseInt(process.env.CHUNK_OVERLAP_TOKENS || '80', 10),
   },
+
+  // 记忆管理配置
+  memory: {
+    // 单用户最大记忆数量
+    maxMemoriesPerUser: parseInt(process.env.MAX_MEMORIES_PER_USER || '1000', 10),
+    // 触发清理的阈值（达到此比例时触发清理）
+    cleanupThreshold: parseFloat(process.env.MEMORY_CLEANUP_THRESHOLD || '0.9'),
+    // 每次清理的目标比例（清理到此比例以下）
+    cleanupTarget: parseFloat(process.env.MEMORY_CLEANUP_TARGET || '0.7'),
+    // 清理时批量评估的记忆数量
+    cleanupBatchSize: parseInt(process.env.MEMORY_CLEANUP_BATCH || '50', 10),
+  },
 };
 
 // 运行时配置校验

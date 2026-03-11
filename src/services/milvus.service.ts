@@ -583,6 +583,118 @@ export class MilvusService {
     }
   }
 
+  /**
+   * 统计用户的记忆数量
+   *
+   * @param userId 用户 ID
+   * @param workspaceId 工作空间 ID（可选）
+   * @returns 记忆数量
+   */
+  async countMemories(userId: string, workspaceId?: string): Promise<number> {
+    try {
+      let expr = `user_id == "${userId}"`;
+      if (workspaceId) {
+        expr += ` && workspace_id == "${workspaceId}"`;
+      }
+
+      const result = await this.client.query({
+        collection_name: this.collectionName,
+        filter: expr,
+        output_fields: ['id'],
+      });
+
+      return result.data?.length || 0;
+    } catch (error) {
+      console.error('[Milvus] 统计记忆数量失败:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * 获取用户最老的记忆（用于清理）
+   *
+   * @param userId 用户 ID
+   * @param limit 数量限制
+   * @returns 最老的记忆列表
+   */
+  async getOldestMemories(userId: string, limit: number = 50): Promise<MemoryQueryResult[]> {
+    try {
+      const expr = `user_id == "${userId}"`;
+
+      const result = await this.client.query({
+        collection_name: this.collectionName,
+        filter: expr,
+        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'created_at', 'memory_type'],
+        limit: limit,
+        // Milvus 不支持 ORDER BY，我们需要获取所有数据后排序
+      });
+
+      if (!result.data || result.data.length === 0) {
+        return [];
+      }
+
+      // 按 created_at 升序排序（最老的在前）
+      const sorted = result.data.sort((a: any, b: any) => (a.created_at || 0) - (b.created_at || 0));
+
+      return sorted.slice(0, limit).map((item: any) => ({
+        id: item.id,
+        userId: item.user_id,
+        workspaceId: item.workspace_id,
+        content: item.content,
+        score: 0,
+        createdAt: item.created_at || 0,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new MilvusError(`获取最老记忆失败: ${message}`);
+    }
+  }
+
+  /**
+   * 批量删除记忆
+   *
+   * @param userId 用户 ID（用于校验）
+   * @param memoryIds 要删除的记忆 ID 列表
+   * @returns 删除的数量
+   */
+  async deleteMemoriesByIds(userId: string, memoryIds: string[]): Promise<number> {
+    if (!memoryIds || memoryIds.length === 0) {
+      return 0;
+    }
+
+    try {
+      // 构建删除表达式
+      const idsExpr = memoryIds.map(id => `"${id}"`).join(', ');
+      const expr = `user_id == "${userId}" && id in [${idsExpr}]`;
+
+      // 先验证这些记忆确实属于该用户
+      const existingMemories = await this.client.query({
+        collection_name: this.collectionName,
+        filter: expr,
+        output_fields: ['id'],
+      });
+
+      const validIds = existingMemories.data?.map((item: any) => item.id) || [];
+
+      if (validIds.length === 0) {
+        return 0;
+      }
+
+      // 执行删除
+      const deleteExpr = validIds.map((id: string) => `"${id}"`).join(', ');
+      await this.client.deleteEntities({
+        collection_name: this.collectionName,
+        filter: `id in [${deleteExpr}]`,
+      });
+
+      console.log(`[Milvus] 已删除 ${validIds.length} 条记忆`);
+      return validIds.length;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new MilvusError(`批量删除记忆失败: ${message}`);
+    }
+  }
+
   // ============ User Persona 集合操作 ============
 
   /**

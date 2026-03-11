@@ -261,6 +261,101 @@ ${similarMemories.map((m, i) => `[${i + 1}] ID: ${m.id}
   }
 
   /**
+   * 批量评估记忆的保留价值
+   *
+   * 用于记忆清理时判断哪些记忆可以删除
+   *
+   * @param memories 记忆列表（包含 id, content, createdAt）
+   * @returns 每条记忆的保留建议 { id, shouldKeep, reason }
+   */
+  async evaluateMemoryRetention(
+    memories: Array<{ id: string; content: string; createdAt: number }>
+  ): Promise<Array<{ id: string; shouldKeep: boolean; reason: string }>> {
+    if (memories.length === 0) {
+      return [];
+    }
+
+    // 获取当前时间上下文
+    const timeContext = getRichTimeContext();
+
+    const prompt = `你是一个记忆管理助手。请评估以下记忆的保留价值。
+
+## 当前时间
+
+${timeContext.formattedContext}
+
+## 待评估的记忆
+
+${memories.map((m, i) => `[${i + 1}] ID: ${m.id}
+创建时间: ${new Date(m.createdAt).toLocaleString('zh-CN')}
+内容: ${m.content}`).join('\n\n')}
+
+## 评估标准
+
+**应该保留** (shouldKeep: true)：
+- 包含用户的长期偏好、习惯、性格特点
+- 包含重要的人际关系信息
+- 包含重要的历史事件或经历
+- 包含持续有效的决策或约定
+
+**可以删除** (shouldKeep: false)：
+- 临时性、一次性的信息（如已完成的待办）
+- 过时的信息（如过去的日程安排）
+- 重复或冗余的信息
+- 琐碎的日常细节，无长期参考价值
+- 超过 30 天的 todo 类型记忆
+
+请以 JSON 数组格式返回评估结果：
+[
+  {
+    "id": "记忆ID",
+    "shouldKeep": true/false,
+    "reason": "保留/删除的原因"
+  },
+  ...
+]
+
+只返回 JSON 数组，不要包含其他内容。`;
+
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 2048,
+        response_format: { type: 'json_object' },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new LLMError('记忆评估返回格式异常');
+      }
+
+      // 解析结果
+      const parsed = JSON.parse(content);
+
+      // 处理可能的包装格式
+      const results = Array.isArray(parsed) ? parsed : (parsed.results || parsed.memories || []);
+
+      console.log(`[LLM] 评估了 ${results.length} 条记忆的保留价值`);
+
+      // 确保返回格式正确
+      return results.map((r: any) => ({
+        id: r.id,
+        shouldKeep: r.shouldKeep ?? true,
+        reason: r.reason || '未提供原因',
+      }));
+    } catch (error) {
+      console.error('[LLM] 记忆评估失败:', error);
+      // Fail-safe: 保留所有记忆
+      return memories.map(m => ({
+        id: m.id,
+        shouldKeep: true,
+        reason: '评估失败，默认保留',
+      }));
+    }
+  }
+
+  /**
    * 构建人格化系统提示
    *
    * 使用人格模板渲染
