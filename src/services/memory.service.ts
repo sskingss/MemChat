@@ -246,7 +246,7 @@ export class MemoryService {
     workspaceId: string,
     query: string,
     topK: number = 5
-  ): Promise<string[]> {
+  ): Promise<Array<{ content: string; createdAt: number }>> {
     try {
       // 1. 将查询向量化
       const queryVector = await embeddingService.generateEmbedding(query);
@@ -260,8 +260,11 @@ export class MemoryService {
         topK
       );
 
-      // 3. 提取记忆内容
-      return memories.map((mem) => mem.content);
+      // 3. 返回带时间戳的记忆
+      return memories.map((mem) => ({
+        content: mem.content,
+        createdAt: mem.createdAt,
+      }));
     } catch (error) {
       console.error('[Memory] 检索记忆失败:', error);
       // 检索失败返回空数组，不影响对话

@@ -1,5 +1,6 @@
 import Handlebars from 'handlebars';
 import { milvusService } from './milvus.service';
+import { getRichTimeContext, formatTimestampShort } from '../utils/time';
 import type { UserPersona } from '../types';
 
 /**
@@ -18,6 +19,10 @@ export class PersonaService {
 ## Identity
 
 你的目标是帮助 {{userName}} 专注于真正重要的事情。你不是普通的助手，而是 {{userName}} 的伙伴。
+
+## Current Time
+
+{{timeContext}}
 
 ## Core Traits
 
@@ -65,6 +70,7 @@ _(错误和洞察记录在此，避免重复。)_
 
 {{#if memories}}
 以下是相关的历史记忆，帮助你在对话中保持连贯性。
+每条记忆前的 [日期] 表示该记忆的创建时间。
 
 历史记忆：
 {{#each memories}}
@@ -150,11 +156,18 @@ _(错误和洞察记录在此，避免重复。)_
    *
    * 使用 Handlebars 模板引擎渲染人格的系统提示
    */
-  renderSystemPrompt(persona: UserPersona, memories: string[]): string {
+  renderSystemPrompt(persona: UserPersona, memories: Array<{ content: string; createdAt: number }>): string {
     const template = Handlebars.compile(this.systemPromptTemplate);
 
-    // 对记忆内容进行称呼标准化，避免旧称呼干扰
-    const normalizedMemories = memories.map(memory => this.normalizeNamesInMemory(memory, persona));
+    // 获取时间上下文
+    const timeContext = getRichTimeContext();
+
+    // 对记忆内容进行称呼标准化，并添加时间戳前缀
+    const formattedMemories = memories.map(memory => {
+      const normalizedContent = this.normalizeNamesInMemory(memory.content, persona);
+      const timePrefix = `[${formatTimestampShort(memory.createdAt)}]`;
+      return `${timePrefix} ${normalizedContent}`;
+    });
 
     const data = {
       aiName: persona.aiName,
@@ -166,7 +179,8 @@ _(错误和洞察记录在此，避免重复。)_
       longTermVision: persona.longTermVision,
       boundaries: persona.boundaries,
       lessonsLearned: persona.lessonsLearned && persona.lessonsLearned.length > 0 ? persona.lessonsLearned : null,
-      memories: normalizedMemories.length > 0 ? normalizedMemories : null,
+      memories: formattedMemories.length > 0 ? formattedMemories : null,
+      timeContext: timeContext.formattedContext,
     };
 
     return template(data);

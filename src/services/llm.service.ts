@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { config } from '../config';
 import { LLMError } from '../utils/errors';
 import { personaService } from './persona.service';
+import { getRichTimeContext } from '../utils/time';
 import type { MemoryImportanceResult, UserPersona, SimilarMemoryContext, MemoryUpdateDecision } from '../types';
 
 /**
@@ -26,10 +27,10 @@ export class LLMService {
    *
    * @param userId 用户 ID（用于获取人格）
    * @param userMessage 用户消息
-   * @param context RAG 上下文（历史记忆）
+   * @param context RAG 上下文（历史记忆，带时间戳）
    * @returns AI 回复
    */
-  async chat(userId: string, userMessage: string, context: string[]): Promise<string> {
+  async chat(userId: string, userMessage: string, context: Array<{ content: string; createdAt: number }>): Promise<string> {
     try {
       // 获取用户人格
       let persona = await personaService.getUserPersona(userId);
@@ -81,36 +82,53 @@ export class LLMService {
     assistantReply: string
   ): Promise<MemoryImportanceResult> {
     try {
-      const now = new Date();
-      const currentDateTime = now.toISOString();
+      // 获取丰富的时间上下文
+      const timeContext = getRichTimeContext();
 
       const prompt = `你是一个记忆重要性判断助手。请分析以下对话，判断是否包含值得长期存储的重要信息。
 
-对话内容：
+## 当前时间上下文
+
+${timeContext.formattedContext}
+
+## 对话内容
+
 用户: ${userMessage}
 助手: ${assistantReply}
 
-当前日期时间: ${currentDateTime}
+## 判断标准
 
-判断标准：
 1. 是否包含用户的个人偏好、习惯、重要背景信息？
 2. 是否包含重要的决策或约定？
 3. 是否包含需要在未来对话中记住的事实信息？
 4. 是否包含用户的情感状态或重要经历？
 5. 是否包含待办事项、任务、提醒或截止日期？
 
-待办事项识别：
+## 待办事项识别规则
+
 - 如果对话包含任务、待办、提醒、截止日期等，应标记为 todo 类型
-- 提取具体的截止日期或过期时间（如"明天"、"下周五"、"3月15日"等）
-- 将相对时间转换为绝对时间戳（毫秒）
-- 如果没有明确的过期时间，根据任务性质设置合理的默认过期时间
+- **关键：摘要必须使用绝对日期而非相对时间**
+  - 正确示例："用户2024年3月15日周五有周会"
+  - 错误示例："用户明天有周会"
+- 根据上方时间上下文，将相对时间转换为绝对日期：
+  - "今天" → ${timeContext.currentDate}
+  - "明天" → ${timeContext.tomorrow}
+  - "后天" → ${timeContext.dayAfterTomorrow}
+  - "下周一" → ${timeContext.nextMonday}
+- 提取具体的时间点（如"下午3点"转为"15:00"）
+- expiresAt 应该是任务完成或过期的时间戳（毫秒）
+
+## 普通记忆规则
+
+- 摘要应简洁但包含必要的上下文信息
+- 如果涉及时间相关内容，同样使用绝对日期
 
 如果只是简单的问答、临时性问题、或者不包含个人化信息，则不需要存储。
 
 请以 JSON 格式返回判断结果：
 {
   "isImportant": true/false,
-  "summary": "重要信息的简短摘要（如果 isImportant 为 true）",
+  "summary": "重要信息的摘要（必须使用绝对日期，如：用户2024年3月15日周五14:00有周会，需要准备周报）",
   "reason": "判断为重要/不重要的原因",
   "memoryType": "general" | "todo",
   "expiresAt": 过期时间戳（毫秒，0表示永不过期，todo类型建议设置具体过期时间）
@@ -145,6 +163,8 @@ export class LLMService {
       if (result.expiresAt === undefined) {
         result.expiresAt = 0;
       }
+
+      console.log(`[LLM] 记忆判断: type=${result.memoryType}, summary=${result.summary?.substring(0, 50)}...`);
 
       return result;
     } catch (error) {
@@ -245,7 +265,7 @@ ${similarMemories.map((m, i) => `[${i + 1}] ID: ${m.id}
    *
    * 使用人格模板渲染
    */
-  private buildPersonaPrompt(persona: UserPersona, memories: string[]): string {
+  private buildPersonaPrompt(persona: UserPersona, memories: Array<{ content: string; createdAt: number }>): string {
     return personaService.renderSystemPrompt(persona, memories);
   }
 }

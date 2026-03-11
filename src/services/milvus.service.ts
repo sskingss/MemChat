@@ -302,7 +302,7 @@ export class MilvusService {
         vectors: [queryVector],
         filter: expr, // 【关键】强制过滤
         limit: topK,
-        output_fields: ['id', 'user_id', 'workspace_id', 'content'],
+        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'created_at'],
         metric_type: 'L2',
         params: { nprobe: 10 },
       });
@@ -323,6 +323,7 @@ export class MilvusService {
         workspaceId: hit.workspace_id,
         content: hit.content,
         score: hit.score,
+        createdAt: hit.created_at || 0,
       }));
     } catch (error) {
       console.error('[Milvus] Search error:', error);
@@ -437,6 +438,7 @@ export class MilvusService {
         workspaceId: item.workspace_id,
         content: item.content,
         score: 0, // 列表查询不需要相似度分数
+        createdAt: item.created_at || 0,
       }));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';

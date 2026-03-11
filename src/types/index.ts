@@ -25,6 +25,7 @@ export interface MemoryQueryResult {
   workspaceId: string;
   content: string;
   score: number; // 相似度分数
+  createdAt: number; // 创建时间戳
 }
 
 // Chat 请求体
