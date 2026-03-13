@@ -37,14 +37,26 @@ export const config = {
 
   // 记忆管理配置
   memory: {
-    // 单用户最大记忆数量
     maxMemoriesPerUser: parseInt(process.env.MAX_MEMORIES_PER_USER || '1000', 10),
-    // 触发清理的阈值（达到此比例时触发清理）
     cleanupThreshold: parseFloat(process.env.MEMORY_CLEANUP_THRESHOLD || '0.9'),
-    // 每次清理的目标比例（清理到此比例以下）
     cleanupTarget: parseFloat(process.env.MEMORY_CLEANUP_TARGET || '0.7'),
-    // 清理时批量评估的记忆数量
     cleanupBatchSize: parseInt(process.env.MEMORY_CLEANUP_BATCH || '50', 10),
+    // 写入时相似记忆检索配置
+    similarityTopK: parseInt(process.env.MEMORY_SIMILARITY_TOP_K || '8', 10),
+    similarityThreshold: parseFloat(process.env.MEMORY_SIMILARITY_THRESHOLD || '0.7'),
+  },
+
+  // 记忆压缩配置
+  compression: {
+    enabled: process.env.MEMORY_COMPRESSION_ENABLED !== 'false',
+    // 达到此比例时触发主动聚类压缩（在清理之前）
+    triggerRatio: parseFloat(process.env.MEMORY_COMPRESSION_TRIGGER_RATIO || '0.5'),
+    // L2 距离阈值，小于此值的记忆归为同一簇
+    clusterSimilarityThreshold: parseFloat(process.env.MEMORY_CLUSTER_THRESHOLD || '0.5'),
+    // 最小簇大小，达到此数量才触发压缩
+    minClusterSize: parseInt(process.env.MEMORY_CLUSTER_MIN_SIZE || '3', 10),
+    // 每日定时压缩的小时（0-23，UTC）
+    scheduledHour: parseInt(process.env.MEMORY_COMPRESSION_HOUR || '3', 10),
   },
 };
 

@@ -2,7 +2,7 @@ import { MilvusClient, DataType, LoadState } from '@zilliz/milvus2-sdk-node';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import { MilvusError } from '../utils/errors';
-import type { Memory, MemoryQueryResult, UserPersona, BootstrapSession, MemoryType } from '../types';
+import type { Memory, MemoryQueryResult, MemoryWithVector, UserPersona, BootstrapSession, MemoryType, CompressionLevel } from '../types';
 
 /**
  * 用户信息接口
@@ -221,20 +221,17 @@ export class MilvusService {
    * 插入记忆
    *
    * 【隔离保证】强制接收 userId，写入时自动带有 user_id 字段
-   * 即使恶意调用此方法，也无法伪造其他用户的记忆
-   *
-   * @param memoryType 记忆类型：general 或 todo
-   * @param expiresAt 过期时间戳（毫秒），0 表示永不过期
    */
   async insertMemory(
-    userId: string, // 【强制参数】确保调用者必须提供 userId
+    userId: string,
     workspaceId: string,
     content: string,
     vector: number[],
     memoryType: MemoryType = 'general',
-    expiresAt: number = 0
+    expiresAt: number = 0,
+    importanceScore: number = 5,
+    compressionLevel: CompressionLevel = 0
   ): Promise<string> {
-    // 参数校验
     if (!userId || !workspaceId || !content || vector.length !== this.dimension) {
       throw new MilvusError('insertMemory 参数无效');
     }
@@ -248,7 +245,7 @@ export class MilvusService {
         fields_data: [
           {
             id: memoryId,
-            user_id: userId, // 【核心】写入时绑定 user_id
+            user_id: userId,
             workspace_id: workspaceId,
             content,
             vector,
@@ -256,12 +253,16 @@ export class MilvusService {
             // 动态字段
             memory_type: memoryType,
             expires_at: expiresAt,
+            importance_score: importanceScore,
+            access_count: 0,
+            last_accessed_at: 0,
+            compression_level: compressionLevel,
           },
         ],
       });
 
       console.log('[Milvus] Insert result:', JSON.stringify(result, null, 2));
-      console.log(`[Milvus] 插入记忆: id=${memoryId}, type=${memoryType}, expiresAt=${expiresAt || 'never'}`);
+      console.log(`[Milvus] 插入记忆: id=${memoryId}, type=${memoryType}, score=${importanceScore}, level=${compressionLevel}`);
       return memoryId;
     } catch (error) {
       console.error('[Milvus] Insert error:', error);
@@ -300,21 +301,20 @@ export class MilvusService {
       const result = await this.client.search({
         collection_name: this.collectionName,
         vectors: [queryVector],
-        filter: expr, // 【关键】强制过滤
+        filter: expr,
         limit: topK,
-        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'created_at'],
+        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'created_at',
+          'importance_score', 'access_count', 'last_accessed_at', 'compression_level'],
         metric_type: 'L2',
         params: { nprobe: 10 },
       });
 
       console.log('[Milvus] Search result:', JSON.stringify(result, null, 2));
 
-      // 解析结果
       if (!result.results || result.results.length === 0) {
         return [];
       }
 
-      // Milvus 返回的是单个结果数组（非批量搜索）
       const hits = result.results;
 
       return hits.map((hit: any) => ({
@@ -324,6 +324,10 @@ export class MilvusService {
         content: hit.content,
         score: hit.score,
         createdAt: hit.created_at || 0,
+        importanceScore: hit.importance_score ?? 5,
+        accessCount: hit.access_count ?? 0,
+        lastAccessedAt: hit.last_accessed_at ?? 0,
+        compressionLevel: (hit.compression_level ?? 0) as CompressionLevel,
       }));
     } catch (error) {
       console.error('[Milvus] Search error:', error);
@@ -362,14 +366,15 @@ export class MilvusService {
     workspaceId: string,
     memoryIds: string[],
     mergedContent: string,
-    mergedVector: number[]
+    mergedVector: number[],
+    importanceScore: number = 5,
+    compressionLevel: CompressionLevel = 0
   ): Promise<string> {
     if (!userId || !workspaceId || memoryIds.length === 0 || !mergedContent) {
       throw new MilvusError('mergeMemories 参数无效');
     }
 
     try {
-      // 1. 验证所有记忆都属于当前用户
       const idsExpr = memoryIds.map(id => `"${id}"`).join(', ');
       const expr = `user_id == "${userId}" && workspace_id == "${workspaceId}" && id in [${idsExpr}]`;
 
@@ -384,7 +389,6 @@ export class MilvusService {
         throw new MilvusError('部分记忆不存在或不属于当前用户');
       }
 
-      // 2. 删除所有旧记忆
       for (const id of memoryIds) {
         await this.client.deleteEntities({
           collection_name: this.collectionName,
@@ -394,8 +398,10 @@ export class MilvusService {
 
       console.log(`[Milvus] 已删除 ${memoryIds.length} 条旧记忆`);
 
-      // 3. 创建合并后的新记忆
-      const newId = await this.insertMemory(userId, workspaceId, mergedContent, mergedVector);
+      const newId = await this.insertMemory(
+        userId, workspaceId, mergedContent, mergedVector,
+        'general', 0, importanceScore, compressionLevel
+      );
 
       console.log(`[Milvus] 合并完成: ${memoryIds.length} 条记忆 -> 新记忆 ${newId}`);
       return newId;
@@ -425,7 +431,8 @@ export class MilvusService {
       const result = await this.client.query({
         collection_name: this.collectionName,
         filter: expr,
-        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'created_at'],
+        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'created_at',
+          'importance_score', 'access_count', 'last_accessed_at', 'compression_level'],
       });
 
       if (!result.data || result.data.length === 0) {
@@ -437,8 +444,12 @@ export class MilvusService {
         userId: item.user_id,
         workspaceId: item.workspace_id,
         content: item.content,
-        score: 0, // 列表查询不需要相似度分数
+        score: 0,
         createdAt: item.created_at || 0,
+        importanceScore: item.importance_score ?? 5,
+        accessCount: item.access_count ?? 0,
+        lastAccessedAt: item.last_accessed_at ?? 0,
+        compressionLevel: (item.compression_level ?? 0) as CompressionLevel,
       }));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -449,47 +460,51 @@ export class MilvusService {
   /**
    * 更新记忆内容
    *
-   * 【隔离保证】
-   * 1. 先查询该记忆是否存在，且 owner 是当前 userId
-   * 2. 只有校验通过才允许更新
-   * 3. 更新操作在 Milvus 中是 delete + insert
+   * 【隔离保证】先校验 owner，Milvus 不支持原地更新，使用 delete + insert。
+   * 保留原记录的 memory_type、expires_at、importance_score、compression_level。
    */
   async updateMemory(
-    userId: string, // 【强制参数】
+    userId: string,
     memoryId: string,
     newContent: string,
-    newVector: number[]
+    newVector: number[],
+    importanceScore?: number
   ): Promise<boolean> {
     if (!userId || !memoryId || !newContent || newVector.length !== this.dimension) {
       throw new MilvusError('updateMemory 参数无效');
     }
 
     try {
-      // 【第一步隔离校验】查询该记忆是否存在，且 owner 是当前用户
       const expr = `id == "${memoryId}" && user_id == "${userId}"`;
 
       const existingMemory = await this.client.query({
         collection_name: this.collectionName,
         filter: expr,
-        output_fields: ['id', 'user_id', 'workspace_id'],
+        output_fields: ['id', 'user_id', 'workspace_id', 'memory_type', 'expires_at',
+          'importance_score', 'access_count', 'last_accessed_at', 'compression_level'],
         limit: 1,
       });
 
       if (!existingMemory.data || existingMemory.data.length === 0) {
-        // 记忆不存在或不属于当前用户
         return false;
       }
 
-      const workspaceId = existingMemory.data[0].workspace_id;
+      const old = existingMemory.data[0];
+      const workspaceId = old.workspace_id;
+      const memoryType: MemoryType = old.memory_type || 'general';
+      const expiresAt: number = old.expires_at ?? 0;
+      const resolvedScore: number = importanceScore ?? old.importance_score ?? 5;
+      const compressionLevel: CompressionLevel = (old.compression_level ?? 0) as CompressionLevel;
 
-      // 【第二步】执行更新（Milvus 不支持原地更新，需要 delete + insert）
       await this.client.deleteEntities({
         collection_name: this.collectionName,
         filter: `id == "${memoryId}"`,
       });
 
-      // 插入新记录（保持原有的 workspace_id）
-      await this.insertMemory(userId, workspaceId, newContent, newVector);
+      await this.insertMemory(
+        userId, workspaceId, newContent, newVector,
+        memoryType, expiresAt, resolvedScore, compressionLevel
+      );
 
       return true;
     } catch (error) {
@@ -611,42 +626,173 @@ export class MilvusService {
   }
 
   /**
-   * 获取用户最老的记忆（用于清理）
-   *
-   * @param userId 用户 ID
-   * @param limit 数量限制
-   * @returns 最老的记忆列表
+   * 获取用户最老的记忆（向后兼容，内部调用 getMemoriesForCleanup）
    */
   async getOldestMemories(userId: string, limit: number = 50): Promise<MemoryQueryResult[]> {
+    return this.getMemoriesForCleanup(userId, limit);
+  }
+
+  /**
+   * 获取待清理记忆列表（按综合保留分值升序，分越低越优先清理）
+   *
+   * retention_score = importance_score * 3 + log(access_count + 1) * 2 - age_days * 0.1
+   */
+  async getMemoriesForCleanup(userId: string, limit: number = 50): Promise<MemoryQueryResult[]> {
     try {
       const expr = `user_id == "${userId}"`;
 
       const result = await this.client.query({
         collection_name: this.collectionName,
         filter: expr,
-        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'created_at', 'memory_type'],
-        limit: limit,
-        // Milvus 不支持 ORDER BY，我们需要获取所有数据后排序
+        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'created_at',
+          'importance_score', 'access_count', 'last_accessed_at', 'compression_level'],
       });
 
       if (!result.data || result.data.length === 0) {
         return [];
       }
 
-      // 按 created_at 升序排序（最老的在前）
-      const sorted = result.data.sort((a: any, b: any) => (a.created_at || 0) - (b.created_at || 0));
+      const now = Date.now();
 
-      return sorted.slice(0, limit).map((item: any) => ({
+      const scored = result.data.map((item: any) => {
+        const importanceScore: number = item.importance_score ?? 5;
+        const accessCount: number = item.access_count ?? 0;
+        const createdAt: number = item.created_at || 0;
+        const ageDays = (now - createdAt) / (1000 * 60 * 60 * 24);
+        const compressionLevel: number = item.compression_level ?? 0;
+
+        const retentionScore =
+          importanceScore * 3
+          + Math.log(accessCount + 1) * 2
+          - ageDays * 0.1
+          + (compressionLevel > 0 ? 1 : 0); // 已压缩的摘要略微加分
+
+        return {
+          id: item.id,
+          userId: item.user_id,
+          workspaceId: item.workspace_id,
+          content: item.content,
+          score: retentionScore,
+          createdAt,
+          importanceScore,
+          accessCount,
+          lastAccessedAt: item.last_accessed_at ?? 0,
+          compressionLevel: compressionLevel as CompressionLevel,
+        };
+      });
+
+      // 按 retentionScore 升序排列（分最低的最先清理）
+      scored.sort((a: any, b: any) => a.score - b.score);
+
+      return scored.slice(0, limit);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new MilvusError(`获取待清理记忆失败: ${message}`);
+    }
+  }
+
+  /**
+   * 批量更新记忆的访问统计（异步调用，不阻塞主流程）
+   *
+   * Milvus 不支持原地更新字段，需要 delete + insert。
+   * 为避免性能开销，每次仅更新 access_count 和 last_accessed_at。
+   */
+  async updateMemoryAccessStats(userId: string, memoryIds: string[]): Promise<void> {
+    if (!memoryIds || memoryIds.length === 0) return;
+
+    try {
+      const idsExpr = memoryIds.map(id => `"${id}"`).join(', ');
+      const expr = `user_id == "${userId}" && id in [${idsExpr}]`;
+
+      const result = await this.client.query({
+        collection_name: this.collectionName,
+        filter: expr,
+        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'vector',
+          'created_at', 'memory_type', 'expires_at',
+          'importance_score', 'access_count', 'compression_level'],
+      });
+
+      if (!result.data || result.data.length === 0) return;
+
+      const now = Date.now();
+
+      for (const item of result.data) {
+        const newAccessCount = (item.access_count ?? 0) + 1;
+
+        // delete + insert 更新统计字段
+        await this.client.deleteEntities({
+          collection_name: this.collectionName,
+          filter: `id == "${item.id}"`,
+        });
+
+        await this.client.insert({
+          collection_name: this.collectionName,
+          fields_data: [
+            {
+              id: item.id,
+              user_id: item.user_id,
+              workspace_id: item.workspace_id,
+              content: item.content,
+              vector: item.vector,
+              created_at: item.created_at || now,
+              memory_type: item.memory_type || 'general',
+              expires_at: item.expires_at ?? 0,
+              importance_score: item.importance_score ?? 5,
+              access_count: newAccessCount,
+              last_accessed_at: now,
+              compression_level: item.compression_level ?? 0,
+            },
+          ],
+        });
+      }
+
+      console.log(`[Milvus] 更新 ${result.data.length} 条记忆访问统计`);
+    } catch (error) {
+      // 访问统计失败不影响主流程
+      console.error('[Milvus] 更新访问统计失败:', error);
+    }
+  }
+
+  /**
+   * 获取用户全量记忆（包含向量，用于聚类压缩）
+   */
+  async getAllMemoriesWithVectors(
+    userId: string,
+    compressionLevelFilter?: CompressionLevel
+  ): Promise<MemoryWithVector[]> {
+    try {
+      let expr = `user_id == "${userId}"`;
+      if (compressionLevelFilter !== undefined) {
+        expr += ` && compression_level == ${compressionLevelFilter}`;
+      }
+
+      const result = await this.client.query({
+        collection_name: this.collectionName,
+        filter: expr,
+        output_fields: ['id', 'user_id', 'workspace_id', 'content', 'vector',
+          'created_at', 'importance_score', 'access_count', 'last_accessed_at', 'compression_level'],
+      });
+
+      if (!result.data || result.data.length === 0) {
+        return [];
+      }
+
+      return result.data.map((item: any) => ({
         id: item.id,
         userId: item.user_id,
         workspaceId: item.workspace_id,
         content: item.content,
+        vector: item.vector || [],
         score: 0,
         createdAt: item.created_at || 0,
+        importanceScore: item.importance_score ?? 5,
+        accessCount: item.access_count ?? 0,
+        lastAccessedAt: item.last_accessed_at ?? 0,
+        compressionLevel: (item.compression_level ?? 0) as CompressionLevel,
       }));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new MilvusError(`获取最老记忆失败: ${message}`);
+      throw new MilvusError(`获取全量记忆失败: ${message}`);
     }
   }
 

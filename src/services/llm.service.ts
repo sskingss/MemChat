@@ -123,6 +123,14 @@ ${timeContext.formattedContext}
 - 摘要应简洁但包含必要的上下文信息
 - 如果涉及时间相关内容，同样使用绝对日期
 
+## 重要性评分标准（importanceScore 1-10）
+
+- 9-10：核心身份信息（姓名、职业、重大人生事件、深层价值观）
+- 7-8：重要偏好、关键决策、重要约定、持续有效的习惯
+- 5-6：一般性背景信息、日常待办、普通经历
+- 3-4：补充细节、一次性信息
+- 1-2：几乎没有长期价值的琐碎内容
+
 如果只是简单的问答、临时性问题、或者不包含个人化信息，则不需要存储。
 
 请以 JSON 格式返回判断结果：
@@ -131,7 +139,8 @@ ${timeContext.formattedContext}
   "summary": "重要信息的摘要（必须使用绝对日期，如：用户2024年3月15日周五14:00有周会，需要准备周报）",
   "reason": "判断为重要/不重要的原因",
   "memoryType": "general" | "todo",
-  "expiresAt": 过期时间戳（毫秒，0表示永不过期，todo类型建议设置具体过期时间）
+  "expiresAt": 过期时间戳（毫秒，0表示永不过期，todo类型建议设置具体过期时间）,
+  "importanceScore": 重要性分值（1-10的整数）
 }
 
 只返回 JSON，不要包含其他内容。`;
@@ -156,15 +165,17 @@ ${timeContext.formattedContext}
       // 解析 JSON
       const result = JSON.parse(content) as MemoryImportanceResult;
 
-      // 确保 memoryType 和 expiresAt 有默认值
       if (!result.memoryType) {
         result.memoryType = 'general';
       }
       if (result.expiresAt === undefined) {
         result.expiresAt = 0;
       }
+      if (!result.importanceScore || result.importanceScore < 1 || result.importanceScore > 10) {
+        result.importanceScore = 5;
+      }
 
-      console.log(`[LLM] 记忆判断: type=${result.memoryType}, summary=${result.summary?.substring(0, 50)}...`);
+      console.log(`[LLM] 记忆判断: type=${result.memoryType}, score=${result.importanceScore}, summary=${result.summary?.substring(0, 50)}...`);
 
       return result;
     } catch (error) {
@@ -352,6 +363,91 @@ ${memories.map((m, i) => `[${i + 1}] ID: ${m.id}
         shouldKeep: true,
         reason: '评估失败，默认保留',
       }));
+    }
+  }
+
+  /**
+   * 对一组语义相近的记忆簇进行压缩，生成统一摘要
+   *
+   * @param memories 同一簇中的记忆列表
+   * @returns 压缩后的摘要文本和建议的重要性分值
+   */
+  async compressMemoryCluster(
+    memories: Array<{ id: string; content: string; createdAt: number; importanceScore: number }>
+  ): Promise<{ summary: string; importanceScore: number }> {
+    if (memories.length === 0) {
+      throw new LLMError('compressMemoryCluster: 记忆列表为空');
+    }
+
+    if (memories.length === 1) {
+      return {
+        summary: memories[0].content,
+        importanceScore: memories[0].importanceScore,
+      };
+    }
+
+    const timeContext = getRichTimeContext();
+    const maxScore = Math.max(...memories.map(m => m.importanceScore));
+
+    const prompt = `你是一个记忆压缩助手。以下是关于同一主题的多条记忆，请将它们压缩为一条完整、简洁的摘要记忆，保留所有关键信息，去除重复内容。
+
+## 当前时间
+${timeContext.formattedContext}
+
+## 待压缩的记忆（共 ${memories.length} 条）
+
+${memories.map((m, i) => `[${i + 1}] 创建时间: ${new Date(m.createdAt).toLocaleString('zh-CN')}
+重要性: ${m.importanceScore}/10
+内容: ${m.content}`).join('\n\n')}
+
+## 压缩要求
+
+1. 综合所有记忆，生成一条包含全部关键信息的摘要
+2. 去除重复、矛盾或过时的部分（保留最新版本）
+3. 摘要应简洁但完整，不超过 500 字
+4. 时间信息统一使用绝对日期格式
+5. 给出压缩后记忆的重要性分值（1-10），综合考虑所有原始记忆的重要性
+
+请以 JSON 格式返回：
+{
+  "summary": "压缩后的记忆摘要",
+  "importanceScore": 压缩后的重要性分值（1-10整数，不低于原始记忆中最高分值 ${maxScore}）
+}
+
+只返回 JSON，不要包含其他内容。`;
+
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 1024,
+        response_format: { type: 'json_object' },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new LLMError('记忆压缩返回格式异常');
+      }
+
+      const result = JSON.parse(content) as { summary: string; importanceScore: number };
+
+      if (!result.summary) {
+        throw new LLMError('压缩摘要为空');
+      }
+      if (!result.importanceScore || result.importanceScore < 1 || result.importanceScore > 10) {
+        result.importanceScore = maxScore;
+      }
+
+      console.log(`[LLM] 压缩 ${memories.length} 条记忆 → score=${result.importanceScore}, summary=${result.summary.substring(0, 60)}...`);
+      return result;
+    } catch (error) {
+      console.error('[LLM] 记忆压缩失败:', error);
+      // Fail-safe：拼接所有内容作为摘要
+      const fallbackSummary = memories.map(m => m.content).join(' | ');
+      return {
+        summary: fallbackSummary.substring(0, 1900),
+        importanceScore: maxScore,
+      };
     }
   }
 

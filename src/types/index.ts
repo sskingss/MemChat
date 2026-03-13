@@ -6,6 +6,9 @@ export interface UserContext {
 // 记忆类型
 export type MemoryType = 'general' | 'todo';
 
+// 记忆压缩层级：0=原始片段, 1=话题摘要, 2=高层概括
+export type CompressionLevel = 0 | 1 | 2;
+
 // Milvus 记忆数据结构
 export interface Memory {
   id: string;
@@ -14,8 +17,13 @@ export interface Memory {
   content: string;
   vector: number[];
   createdAt: Date;
-  memoryType: MemoryType; // 记忆类型
+  memoryType: MemoryType;
   expiresAt: number; // 过期时间戳（毫秒），0 表示永不过期
+  // 智能压缩相关字段（动态字段）
+  importanceScore: number; // 重要性分值 1-10，默认 5
+  accessCount: number; // RAG 检索命中次数
+  lastAccessedAt: number; // 最后一次被检索的时间戳（毫秒）
+  compressionLevel: CompressionLevel; // 压缩层级
 }
 
 // Milvus 查询结果（未反序列化的向量）
@@ -26,6 +34,16 @@ export interface MemoryQueryResult {
   content: string;
   score: number; // 相似度分数
   createdAt: number; // 创建时间戳
+  // 智能压缩相关字段
+  importanceScore: number;
+  accessCount: number;
+  lastAccessedAt: number;
+  compressionLevel: CompressionLevel;
+}
+
+// 用于压缩服务的完整记忆数据（包含向量）
+export interface MemoryWithVector extends MemoryQueryResult {
+  vector: number[];
 }
 
 // Chat 请求体
@@ -44,10 +62,11 @@ export interface ChatResponse {
 // 记忆重要性判断结果
 export interface MemoryImportanceResult {
   isImportant: boolean;
-  summary?: string; // 可选：对重要信息的摘要
-  reason?: string; // 为什么重要
-  memoryType?: MemoryType; // 记忆类型：general 或 todo
+  summary?: string;
+  reason?: string;
+  memoryType?: MemoryType;
   expiresAt?: number; // 过期时间戳（毫秒），0 表示永不过期
+  importanceScore?: number; // 重要性分值 1-10
 }
 
 // 相似记忆上下文（用于 LLM 判断）
