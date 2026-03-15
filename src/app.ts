@@ -2,16 +2,13 @@ import express from 'express';
 import path from 'path';
 import { config } from './config';
 import apiRoutes from './routes';
+import { getPrometheusMetrics } from './controllers/platform.controller';
 
 const app = express();
 
-// 中间件：解析 JSON 请求体
-app.use(express.json());
-
-// 中间件：解析 URL-encoded 请求体
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// 静态文件服务（前端验证页面）
 app.use(express.static(path.join(__dirname, '../public')));
 
 // 健康检查接口（无需鉴权）
@@ -22,6 +19,9 @@ app.get('/health', (req, res) => {
     environment: config.nodeEnv,
   });
 });
+
+// Prometheus metrics 端点（无需鉴权）
+app.get('/metrics', getPrometheusMetrics);
 
 // API 路由（需要鉴权）
 app.use('/api', apiRoutes);

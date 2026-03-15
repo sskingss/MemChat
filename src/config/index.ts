@@ -13,12 +13,17 @@ export const config = {
     expiresIn: '7d',
   },
 
+  // Redis 配置（用于 Working Memory 持久化，可选）
+  redis: process.env.REDIS_URL ? {
+    url: process.env.REDIS_URL,
+  } : undefined,
+
   // Milvus 配置
   milvus: {
     address: process.env.MILVUS_ADDRESS || 'localhost:19530',
     token: process.env.MILVUS_TOKEN || 'root:Milvus',
     collectionName: 'user_memories',
-    dimension: 384, // Xenova/paraphrase-multilingual-MiniLM-L12-v2 的维度
+    dimension: 384,
   },
 
   // LLM API 配置（私有模型，OpenAI 兼容）
@@ -74,15 +79,51 @@ export const config = {
 
   // 【新增】混合检索权重配置
   retrieval: {
-    // 各维度分数权重（总和应为 1.0）
     vectorWeight: parseFloat(process.env.RETRIEVAL_VECTOR_WEIGHT || '0.50'),
     keywordWeight: parseFloat(process.env.RETRIEVAL_KEYWORD_WEIGHT || '0.20'),
     timeDecayWeight: parseFloat(process.env.RETRIEVAL_TIME_DECAY_WEIGHT || '0.15'),
     importanceWeight: parseFloat(process.env.RETRIEVAL_IMPORTANCE_WEIGHT || '0.15'),
-    // 时间衰减半衰期（天），超过此时间的记忆权重减半
     halfLifeDays: parseFloat(process.env.RETRIEVAL_HALF_LIFE_DAYS || '90'),
-    // 检索时拉取候选池大小（topK 的倍数，用于 reranking）
     candidateMultiplier: parseInt(process.env.RETRIEVAL_CANDIDATE_MULTIPLIER || '3', 10),
+  },
+
+  // 多租户配额管理
+  quota: {
+    enabled: process.env.QUOTA_ENABLED === 'true',
+    defaultMaxMemoriesPerWorkspace: parseInt(process.env.QUOTA_DEFAULT_MAX_MEMORIES || '1000', 10),
+    defaultRequestsPerMinute: parseInt(process.env.QUOTA_REQUESTS_PER_MINUTE || '60', 10),
+    dbPath: process.env.QUOTA_DB_PATH || './data/quota.db',
+  },
+
+  // Memory Graph（知识图谱）
+  graph: {
+    enabled: process.env.MEMORY_GRAPH_ENABLED !== 'false',
+    dbPath: process.env.MEMORY_GRAPH_DB_PATH || './data/memory-graph.db',
+  },
+
+  // 情绪追踪
+  emotion: {
+    enabled: process.env.EMOTION_TRACKING_ENABLED !== 'false',
+    dbPath: process.env.EMOTION_DB_PATH || './data/emotion.db',
+  },
+
+  // Persona Evolution（人格进化）
+  personaEvolution: {
+    enabled: process.env.PERSONA_EVOLUTION_ENABLED !== 'false',
+    reflectEveryNChats: parseInt(process.env.PERSONA_REFLECT_EVERY_N || '10', 10),
+    dbPath: process.env.PERSONA_EVOLUTION_DB_PATH || './data/persona-evolution.db',
+  },
+
+  // MCP Server
+  mcp: {
+    enabled: process.env.MCP_ENABLED === 'true',
+    port: parseInt(process.env.MCP_PORT || '3001', 10),
+  },
+
+  // 多模态记忆
+  multimodal: {
+    enabled: process.env.MULTIMODAL_ENABLED === 'true',
+    maxFileSizeMB: parseInt(process.env.MULTIMODAL_MAX_FILE_SIZE_MB || '10', 10),
   },
 };
 

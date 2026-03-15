@@ -140,3 +140,6 @@ vite.config.ts.timestamp-*
 
 .DS_Store
 CLAUDE.md
+
+# SQLite data directory
+data/

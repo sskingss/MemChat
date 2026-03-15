@@ -88,6 +88,45 @@ export class LLMService {
   }
 
   /**
+   * 流式对话接口
+   *
+   * 返回 OpenAI Stream 对象，供 SSE 端点使用
+   */
+  async chatStream(
+    userId: string,
+    userMessage: string,
+    context: Array<{ content: string; createdAt: number }>,
+    sessionMessages?: WorkingMemoryMessage[]
+  ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
+    let persona = await personaService.getUserPersona(userId);
+    if (!persona) {
+      persona = personaService.getDefaultPersona(userId);
+    }
+
+    const systemPrompt = this.buildPersonaPrompt(persona, context);
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      { role: 'system', content: systemPrompt },
+    ];
+
+    if (sessionMessages && sessionMessages.length > 0) {
+      for (const msg of sessionMessages) {
+        messages.push({ role: msg.role, content: msg.content });
+      }
+    }
+
+    messages.push({ role: 'user', content: userMessage });
+
+    const stream = await this.openai.chat.completions.create({
+      model: this.model,
+      messages,
+      max_tokens: 4096,
+      stream: true,
+    });
+
+    return stream as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+  }
+
+  /**
    * 【核心优化】记忆处理 Pipeline — 单次 LLM 调用完成所有记忆决策
    *
    * 替代原来的两步流程（evaluateMemoryImportance + evaluateMemoryUpdate），

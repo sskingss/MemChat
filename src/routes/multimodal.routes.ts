@@ -1,15 +1,8 @@
 import { Router } from 'express';
-import { getMemories, updateMemory, deleteMemory } from '../controllers/memory.controller';
 import { importBatch, importText, importMarkdown, importJSON } from '../controllers/multimodal.controller';
 
 const router = Router();
 
-// CRUD
-router.get('/', getMemories);
-router.put('/:id', updateMemory);
-router.delete('/:id', deleteMemory);
-
-// Multimodal import (accessible at both /api/memories/import and /api/import)
 router.post('/import', importBatch);
 router.post('/import/text', importText);
 router.post('/import/markdown', importMarkdown);

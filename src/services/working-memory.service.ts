@@ -1,47 +1,100 @@
+import Redis from 'ioredis';
 import { config } from '../config';
 import type { WorkingMemorySession, WorkingMemoryMessage } from '../types';
 
 /**
  * Working Memory 服务（会话级短期记忆）
  *
- * 对标认知科学中的"工作记忆"概念：
- * - 存储最近 N 轮对话的完整上下文
- * - 让 LLM 能够感知多轮对话历史，无需依赖长期记忆检索
- * - 会话超过 TTL 后自动过期
- *
- * 与长期记忆的区别：
- * - Working Memory：短暂，会话内有效，直接注入 LLM 消息列表
- * - Long-term Memory（Milvus）：持久，跨会话有效，通过 RAG 检索
- *
- * 存储方式：内存 Map（重启后清空，这是预期行为，会话历史不需要持久化）
+ * 支持两种存储后端：
+ * - Redis（生产环境推荐）：服务重启后会话数据不丢失，支持多实例部署
+ * - 内存 Map（开发/无 Redis 时降级）：重启后清空
  */
 export class WorkingMemoryService {
   private sessions: Map<string, WorkingMemorySession> = new Map();
-  private cleanupIntervalMs = 5 * 60 * 1000; // 每 5 分钟清理一次过期会话
+  private redis: Redis | null = null;
+  private useRedis: boolean;
+  private cleanupIntervalMs = 5 * 60 * 1000;
 
   constructor() {
+    this.useRedis = config.workingMemory.enabled && !!config.redis?.url;
+
+    if (this.useRedis) {
+      try {
+        this.redis = new Redis(config.redis!.url, {
+          maxRetriesPerRequest: 3,
+          lazyConnect: true,
+        });
+        this.redis.on('error', (err) => {
+          console.error('[WorkingMemory] Redis 连接错误，降级为内存存储:', err.message);
+          this.useRedis = false;
+          this.redis = null;
+        });
+        this.redis.connect().then(() => {
+          console.log('[WorkingMemory] Redis 连接成功');
+        }).catch((err) => {
+          console.warn('[WorkingMemory] Redis 连接失败，降级为内存存储:', err.message);
+          this.useRedis = false;
+          this.redis = null;
+        });
+      } catch {
+        console.warn('[WorkingMemory] Redis 初始化失败，使用内存存储');
+        this.useRedis = false;
+      }
+    }
+
     if (config.workingMemory.enabled) {
       this.startCleanupTimer();
     }
   }
 
-  /**
-   * 获取或创建会话
-   *
-   * @param sessionId   会话 ID（由客户端提供或自动生成）
-   * @param userId      用户 ID
-   * @param workspaceId 工作空间 ID
-   */
-  getOrCreateSession(sessionId: string, userId: string, workspaceId: string): WorkingMemorySession {
+  private redisKey(sessionId: string): string {
+    return `memchat:session:${sessionId}`;
+  }
+
+  async getOrCreateSession(sessionId: string, userId: string, workspaceId: string): Promise<WorkingMemorySession> {
+    if (this.useRedis && this.redis) {
+      return this.getOrCreateSessionRedis(sessionId, userId, workspaceId);
+    }
+    return this.getOrCreateSessionMemory(sessionId, userId, workspaceId);
+  }
+
+  private async getOrCreateSessionRedis(sessionId: string, userId: string, workspaceId: string): Promise<WorkingMemorySession> {
+    const key = this.redisKey(sessionId);
+    const data = await this.redis!.get(key);
+
+    if (data) {
+      const session: WorkingMemorySession = JSON.parse(data);
+      if (session.userId === userId) {
+        const ttlMs = config.workingMemory.sessionTtlMinutes * 60 * 1000;
+        if (Date.now() - session.updatedAt < ttlMs) {
+          return session;
+        }
+      }
+      await this.redis!.del(key);
+    }
+
+    const session: WorkingMemorySession = {
+      sessionId,
+      userId,
+      workspaceId,
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    const ttlSeconds = config.workingMemory.sessionTtlMinutes * 60;
+    await this.redis!.set(key, JSON.stringify(session), 'EX', ttlSeconds);
+    return session;
+  }
+
+  private getOrCreateSessionMemory(sessionId: string, userId: string, workspaceId: string): WorkingMemorySession {
     const existing = this.sessions.get(sessionId);
 
     if (existing && existing.userId === userId) {
-      // 检查是否过期
       const ttlMs = config.workingMemory.sessionTtlMinutes * 60 * 1000;
       if (Date.now() - existing.updatedAt < ttlMs) {
         return existing;
       }
-      // 已过期，删除并重建
       this.sessions.delete(sessionId);
     }
 
@@ -58,19 +111,55 @@ export class WorkingMemoryService {
     return session;
   }
 
-  /**
-   * 追加消息到会话
-   *
-   * 自动裁剪超出 maxMessages 的旧消息
-   */
-  appendMessages(
+  async appendMessages(
+    sessionId: string,
+    userId: string,
+    userMessage: string,
+    assistantReply: string
+  ): Promise<void> {
+    if (!config.workingMemory.enabled) return;
+
+    if (this.useRedis && this.redis) {
+      return this.appendMessagesRedis(sessionId, userId, userMessage, assistantReply);
+    }
+    return this.appendMessagesMemory(sessionId, userId, userMessage, assistantReply);
+  }
+
+  private async appendMessagesRedis(
+    sessionId: string,
+    userId: string,
+    userMessage: string,
+    assistantReply: string
+  ): Promise<void> {
+    const key = this.redisKey(sessionId);
+    const data = await this.redis!.get(key);
+    if (!data) return;
+
+    const session: WorkingMemorySession = JSON.parse(data);
+    if (session.userId !== userId) return;
+
+    const now = Date.now();
+    session.messages.push(
+      { role: 'user', content: userMessage, timestamp: now },
+      { role: 'assistant', content: assistantReply, timestamp: now }
+    );
+
+    const max = config.workingMemory.maxMessages;
+    if (session.messages.length > max) {
+      session.messages = session.messages.slice(session.messages.length - max);
+    }
+
+    session.updatedAt = now;
+    const ttlSeconds = config.workingMemory.sessionTtlMinutes * 60;
+    await this.redis!.set(key, JSON.stringify(session), 'EX', ttlSeconds);
+  }
+
+  private appendMessagesMemory(
     sessionId: string,
     userId: string,
     userMessage: string,
     assistantReply: string
   ): void {
-    if (!config.workingMemory.enabled) return;
-
     const session = this.sessions.get(sessionId);
     if (!session || session.userId !== userId) return;
 
@@ -80,7 +169,6 @@ export class WorkingMemoryService {
       { role: 'assistant', content: assistantReply, timestamp: now }
     );
 
-    // 保留最新的 maxMessages 条（每轮对话 2 条）
     const max = config.workingMemory.maxMessages;
     if (session.messages.length > max) {
       session.messages = session.messages.slice(session.messages.length - max);
@@ -89,14 +177,33 @@ export class WorkingMemoryService {
     session.updatedAt = now;
   }
 
-  /**
-   * 获取会话历史（不含当前消息，用于 LLM 上下文注入）
-   *
-   * 返回最近的消息列表，供 LLM chat() 方法使用
-   */
-  getSessionHistory(sessionId: string, userId: string): WorkingMemoryMessage[] {
+  async getSessionHistory(sessionId: string, userId: string): Promise<WorkingMemoryMessage[]> {
     if (!config.workingMemory.enabled) return [];
 
+    if (this.useRedis && this.redis) {
+      return this.getSessionHistoryRedis(sessionId, userId);
+    }
+    return this.getSessionHistoryMemory(sessionId, userId);
+  }
+
+  private async getSessionHistoryRedis(sessionId: string, userId: string): Promise<WorkingMemoryMessage[]> {
+    const key = this.redisKey(sessionId);
+    const data = await this.redis!.get(key);
+    if (!data) return [];
+
+    const session: WorkingMemorySession = JSON.parse(data);
+    if (session.userId !== userId) return [];
+
+    const ttlMs = config.workingMemory.sessionTtlMinutes * 60 * 1000;
+    if (Date.now() - session.updatedAt > ttlMs) {
+      await this.redis!.del(key);
+      return [];
+    }
+
+    return [...session.messages];
+  }
+
+  private getSessionHistoryMemory(sessionId: string, userId: string): WorkingMemoryMessage[] {
     const session = this.sessions.get(sessionId);
     if (!session || session.userId !== userId) return [];
 
@@ -109,39 +216,40 @@ export class WorkingMemoryService {
     return [...session.messages];
   }
 
-  /**
-   * 清除指定会话（用户主动结束会话时调用）
-   */
-  clearSession(sessionId: string, userId: string): void {
+  async clearSession(sessionId: string, userId: string): Promise<void> {
+    if (this.useRedis && this.redis) {
+      const key = this.redisKey(sessionId);
+      const data = await this.redis.get(key);
+      if (data) {
+        const session: WorkingMemorySession = JSON.parse(data);
+        if (session.userId === userId) {
+          await this.redis.del(key);
+        }
+      }
+      return;
+    }
     const session = this.sessions.get(sessionId);
     if (session && session.userId === userId) {
       this.sessions.delete(sessionId);
     }
   }
 
-  /**
-   * 获取统计信息
-   */
-  getStats(): { activeSessions: number; totalMessages: number } {
+  getStats(): { activeSessions: number; totalMessages: number; backend: string } {
     let totalMessages = 0;
     for (const session of this.sessions.values()) {
       totalMessages += session.messages.length;
     }
-    return { activeSessions: this.sessions.size, totalMessages };
+    return {
+      activeSessions: this.sessions.size,
+      totalMessages,
+      backend: this.useRedis ? 'redis' : 'memory',
+    };
   }
 
-  /**
-   * 生成默认 sessionId（当客户端不提供时使用）
-   *
-   * 格式：{userId}:{workspaceId} — 每个用户每个 workspace 维护一个长期会话
-   */
   static buildDefaultSessionId(userId: string, workspaceId: string): string {
     return `${userId}:${workspaceId}`;
   }
 
-  /**
-   * 定时清理过期会话，防止内存泄漏
-   */
   private startCleanupTimer(): void {
     setInterval(() => {
       const ttlMs = config.workingMemory.sessionTtlMinutes * 60 * 1000;
