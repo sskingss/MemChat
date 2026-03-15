@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { memoryService } from '../services/memory.service';
 import { llmService } from '../services/llm.service';
+import { workingMemoryService, WorkingMemoryService } from '../services/working-memory.service';
 import { LLMError } from '../utils/errors';
 import type { ChatRequest, ChatResponse, UserContext } from '../types';
 
@@ -9,20 +10,19 @@ import type { ChatRequest, ChatResponse, UserContext } from '../types';
  *
  * 核心对话接口：/api/chat
  *
- * 流程：
- * 1. 接收 workspace_id 和 message
- * 2. 携带 req.user.userId 和 workspaceId 去检索历史记忆（RAG）
- * 3. 组装 Prompt（包含历史记忆）
- * 4. 调用 LLM 生成回复
- * 5. 异步判断信息重要性，如果值得则存入 Milvus
+ * 升级后的流程：
+ * 1. 解析 sessionId（支持多轮会话管理）
+ * 2. 从 Working Memory 获取会话历史（短期记忆）
+ * 3. 从 Milvus 检索长期记忆（混合检索：向量 + 关键词 + 时间衰减）
+ * 4. 调用 LLM（注入：长期记忆 + 会话历史 + 当前消息）
+ * 5. 异步 Pipeline 存储（单次 LLM 调用提取事实 + 决策）
+ * 6. 更新 Working Memory
  */
 export const chat = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    // 1. 提取参数
-    const { workspaceId, message } = req.body as ChatRequest;
+    const { workspaceId, message, sessionId: clientSessionId } = req.body as ChatRequest;
     const user = req.user as UserContext;
 
-    // 参数校验
     if (!workspaceId || !message) {
       res.status(400).json({
         error: 'Bad Request',
@@ -39,22 +39,32 @@ export const chat = async (req: Request, res: Response, next: NextFunction) => {
       return;
     }
 
-    // 2. 检索相关记忆（RAG）
-    // 【隔离保证】强制传入 user.userId，确保只检索当前用户的记忆
+    // 确定会话 ID（客户端提供或使用默认规则）
+    const sessionId = clientSessionId ||
+      WorkingMemoryService.buildDefaultSessionId(user.userId, workspaceId);
+
+    // 1. 获取会话历史（Working Memory）
+    workingMemoryService.getOrCreateSession(sessionId, user.userId, workspaceId);
+    const sessionHistory = workingMemoryService.getSessionHistory(sessionId, user.userId);
+
+    // 2. 检索相关长期记忆（混合检索）
     const memories = await memoryService.retrieveRelevantMemories(
       user.userId,
       workspaceId,
       message,
-      5 // 取最相关的 5 条记忆
+      5
     );
 
-    // 3. 调用 LLM 生成回复（传入 userId 获取人格）
-    const reply = await llmService.chat(user.userId, message, memories);
+    // 3. 调用 LLM（长期记忆 + 会话历史 + 当前消息）
+    const reply = await llmService.chat(user.userId, message, memories, sessionHistory);
 
-    // 4. 异步处理记忆存储（不阻塞主流程）
-    // 这样即使记忆存储失败，用户也能正常收到回复
+    // 4. 更新 Working Memory（同步，确保下轮对话能看到本轮历史）
+    workingMemoryService.appendMessages(sessionId, user.userId, message, reply);
+
+    // 5. 异步 Pipeline：存储记忆（不阻塞响应）
+    let memoriesStoredCount = 0;
     (async () => {
-      await memoryService.processAndStoreMemory(
+      memoriesStoredCount = await memoryService.processAndStoreMemory(
         user.userId,
         workspaceId,
         message,
@@ -62,11 +72,12 @@ export const chat = async (req: Request, res: Response, next: NextFunction) => {
       );
     })();
 
-    // 5. 返回结果
+    // 6. 返回结果
     const response: ChatResponse = {
       response: reply,
       memoriesUsed: memories.length,
-      memoriesStored: 1, // 触发了存储操作（实际是否存储由 LLM 判断）
+      memoriesStored: memoriesStoredCount,
+      sessionId,
     };
 
     res.status(200).json(response);
@@ -75,7 +86,7 @@ export const chat = async (req: Request, res: Response, next: NextFunction) => {
       res.status(500).json({
         error: 'Internal Server Error',
         message: 'LLM 服务异常',
-        details: error.message,
+        details: (error as Error).message,
       });
       return;
     }

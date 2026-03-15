@@ -49,14 +49,40 @@ export const config = {
   // 记忆压缩配置
   compression: {
     enabled: process.env.MEMORY_COMPRESSION_ENABLED !== 'false',
-    // 达到此比例时触发主动聚类压缩（在清理之前）
     triggerRatio: parseFloat(process.env.MEMORY_COMPRESSION_TRIGGER_RATIO || '0.5'),
-    // L2 距离阈值，小于此值的记忆归为同一簇
     clusterSimilarityThreshold: parseFloat(process.env.MEMORY_CLUSTER_THRESHOLD || '0.5'),
-    // 最小簇大小，达到此数量才触发压缩
     minClusterSize: parseInt(process.env.MEMORY_CLUSTER_MIN_SIZE || '3', 10),
-    // 每日定时压缩的小时（0-23，UTC）
     scheduledHour: parseInt(process.env.MEMORY_COMPRESSION_HOUR || '3', 10),
+  },
+
+  // 【新增】工作记忆（会话级短期记忆）配置
+  workingMemory: {
+    // 每个会话保留的最大消息轮数（user+assistant 各算一条）
+    maxMessages: parseInt(process.env.WORKING_MEMORY_MAX_MESSAGES || '20', 10),
+    // 会话超过此时长（分钟）不活跃则自动过期
+    sessionTtlMinutes: parseInt(process.env.WORKING_MEMORY_TTL_MINUTES || '120', 10),
+    // 是否启用 working memory
+    enabled: process.env.WORKING_MEMORY_ENABLED !== 'false',
+  },
+
+  // 【新增】嵌入向量缓存配置
+  embeddingCache: {
+    enabled: process.env.EMBEDDING_CACHE_ENABLED !== 'false',
+    // LRU 缓存最大条数
+    maxSize: parseInt(process.env.EMBEDDING_CACHE_MAX_SIZE || '2000', 10),
+  },
+
+  // 【新增】混合检索权重配置
+  retrieval: {
+    // 各维度分数权重（总和应为 1.0）
+    vectorWeight: parseFloat(process.env.RETRIEVAL_VECTOR_WEIGHT || '0.50'),
+    keywordWeight: parseFloat(process.env.RETRIEVAL_KEYWORD_WEIGHT || '0.20'),
+    timeDecayWeight: parseFloat(process.env.RETRIEVAL_TIME_DECAY_WEIGHT || '0.15'),
+    importanceWeight: parseFloat(process.env.RETRIEVAL_IMPORTANCE_WEIGHT || '0.15'),
+    // 时间衰减半衰期（天），超过此时间的记忆权重减半
+    halfLifeDays: parseFloat(process.env.RETRIEVAL_HALF_LIFE_DAYS || '90'),
+    // 检索时拉取候选池大小（topK 的倍数，用于 reranking）
+    candidateMultiplier: parseInt(process.env.RETRIEVAL_CANDIDATE_MULTIPLIER || '3', 10),
   },
 };
 
@@ -67,5 +93,15 @@ export function validateConfig() {
   }
   if (config.jwt.secret === 'your-super-secret-jwt-key' && config.nodeEnv === 'production') {
     throw new Error('生产环境必须修改 JWT_SECRET');
+  }
+
+  // 校验检索权重之和是否合理
+  const totalWeight =
+    config.retrieval.vectorWeight +
+    config.retrieval.keywordWeight +
+    config.retrieval.timeDecayWeight +
+    config.retrieval.importanceWeight;
+  if (Math.abs(totalWeight - 1.0) > 0.01) {
+    console.warn(`[Config] 检索权重之和为 ${totalWeight.toFixed(2)}，建议调整为 1.0`);
   }
 }

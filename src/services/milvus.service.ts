@@ -117,11 +117,15 @@ export class MilvusService {
   }
 
   /**
-   * 创建记忆 Collection（启用动态字段）
+   * 创建记忆 Collection（企业级配置）
+   *
+   * 索引升级：IVF_FLAT → HNSW
+   * - IVF_FLAT：适合 ≤10万条，精确但扩展性差
+   * - HNSW：适合百万级，近似最近邻，延迟低、召回率高（企业首选）
+   *
+   * 新增字段：memory_category（动态字段，记录认知分类）
    */
   private async createMemoryCollection(): Promise<void> {
-    // 创建 Collection Schema
-    // 【关键隔离设计】user_id 作为 Partition Key
     const schema = [
       {
         name: 'id',
@@ -133,10 +137,10 @@ export class MilvusService {
       },
       {
         name: 'user_id',
-        description: '用户 ID(Partition Key)',
+        description: '用户 ID（Partition Key）',
         data_type: DataType.VarChar,
         max_length: 64,
-        is_partition_key: true, // 【核心】设为 Partition Key，强制隔离
+        is_partition_key: true, // 【核心】强制租户隔离
       },
       {
         name: 'workspace_id',
@@ -163,28 +167,29 @@ export class MilvusService {
       },
     ];
 
-    // 创建 Collection
     await this.client.createCollection({
       collection_name: this.collectionName,
       fields: schema,
-      enable_dynamic_field: true, // 启用动态字段，支持 memory_type 和 expires_at
+      enable_dynamic_field: true, // 动态字段：memory_type, memory_category, expires_at 等
     });
 
-    // 创建向量索引（IVF_FLAT 索引，适用于中等规模数据）
+    // 【索引升级】HNSW 替代 IVF_FLAT
+    // HNSW 参数说明：
+    // - M: 每个节点的最大连接数，越大召回率越高，内存越多（推荐 8-64）
+    // - efConstruction: 构建时的搜索宽度，越大索引质量越好，建索引越慢（推荐 100-500）
     await this.client.createIndex({
       collection_name: this.collectionName,
       field_name: 'vector',
-      index_type: 'IVF_FLAT',
-      metric_type: 'L2', // L2 距离（欧氏距离）
-      params: { nlist: 128 },
+      index_type: 'HNSW',
+      metric_type: 'L2',
+      params: { M: 16, efConstruction: 200 },
     });
 
-    // 加载 Collection 到内存
     await this.client.loadCollectionSync({
       collection_name: this.collectionName,
     });
 
-    console.log(`Collection ${this.collectionName} 创建成功并已加载`);
+    console.log(`Collection ${this.collectionName} 创建成功（HNSW 索引）`);
   }
 
   /**
@@ -230,7 +235,8 @@ export class MilvusService {
     memoryType: MemoryType = 'general',
     expiresAt: number = 0,
     importanceScore: number = 5,
-    compressionLevel: CompressionLevel = 0
+    compressionLevel: CompressionLevel = 0,
+    memoryCategory?: string // 新增：认知分类（semantic/episodic/procedural/todo）
   ): Promise<string> {
     if (!userId || !workspaceId || !content || vector.length !== this.dimension) {
       throw new MilvusError('insertMemory 参数无效');
@@ -240,25 +246,30 @@ export class MilvusService {
     const createdAt = Date.now();
 
     try {
+      const fields: Record<string, any> = {
+        id: memoryId,
+        user_id: userId,
+        workspace_id: workspaceId,
+        content,
+        vector,
+        created_at: createdAt,
+        // 动态字段
+        memory_type: memoryType,
+        expires_at: expiresAt,
+        importance_score: importanceScore,
+        access_count: 0,
+        last_accessed_at: 0,
+        compression_level: compressionLevel,
+      };
+
+      // 写入认知分类（如提供）
+      if (memoryCategory) {
+        fields.memory_category = memoryCategory;
+      }
+
       const result = await this.client.insert({
         collection_name: this.collectionName,
-        fields_data: [
-          {
-            id: memoryId,
-            user_id: userId,
-            workspace_id: workspaceId,
-            content,
-            vector,
-            created_at: createdAt,
-            // 动态字段
-            memory_type: memoryType,
-            expires_at: expiresAt,
-            importance_score: importanceScore,
-            access_count: 0,
-            last_accessed_at: 0,
-            compression_level: compressionLevel,
-          },
-        ],
+        fields_data: [fields],
       });
 
       console.log('[Milvus] Insert result:', JSON.stringify(result, null, 2));
@@ -304,9 +315,11 @@ export class MilvusService {
         filter: expr,
         limit: topK,
         output_fields: ['id', 'user_id', 'workspace_id', 'content', 'created_at',
-          'importance_score', 'access_count', 'last_accessed_at', 'compression_level'],
+          'importance_score', 'access_count', 'last_accessed_at', 'compression_level',
+          'memory_category'],
         metric_type: 'L2',
-        params: { nprobe: 10 },
+        // HNSW 搜索参数：ef 控制搜索质量，越大召回率越高（推荐 topK 的 2-4 倍）
+        params: { ef: Math.max(64, topK * 4) },
       });
 
       console.log('[Milvus] Search result:', JSON.stringify(result, null, 2));
@@ -324,6 +337,7 @@ export class MilvusService {
         content: hit.content,
         score: hit.score,
         createdAt: hit.created_at || 0,
+        memoryCategory: hit.memory_category || undefined,
         importanceScore: hit.importance_score ?? 5,
         accessCount: hit.access_count ?? 0,
         lastAccessedAt: hit.last_accessed_at ?? 0,

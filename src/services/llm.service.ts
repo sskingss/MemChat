@@ -3,12 +3,23 @@ import { config } from '../config';
 import { LLMError } from '../utils/errors';
 import { personaService } from './persona.service';
 import { getRichTimeContext } from '../utils/time';
-import type { MemoryImportanceResult, UserPersona, SimilarMemoryContext, MemoryUpdateDecision } from '../types';
+import type {
+  MemoryImportanceResult,
+  UserPersona,
+  SimilarMemoryContext,
+  MemoryUpdateDecision,
+  MemoryPipelineResult,
+  WorkingMemoryMessage,
+} from '../types';
 
 /**
  * LLM 服务
  *
- * 使用 OpenAI 兼容 API 进行对话和记忆重要性判断
+ * 使用 OpenAI 兼容 API 进行对话和记忆处理
+ *
+ * 【性能优化】processMemoryPipeline：
+ * 将原来两次串行 LLM 调用（重要性评估 + 更新决策）合并为一次调用，
+ * 同时支持批量提取多条事实，大幅降低延迟和 token 消耗。
  */
 export class LLMService {
   private openai: OpenAI;
@@ -16,7 +27,7 @@ export class LLMService {
 
   constructor() {
     this.openai = new OpenAI({
-      apiKey: config.llm.apiKey || 'no-key', // 私有模型可能不需要 key
+      apiKey: config.llm.apiKey || 'no-key',
       baseURL: config.llm.baseURL,
     });
     this.model = config.llm.model;
@@ -25,36 +36,42 @@ export class LLMService {
   /**
    * 核心对话接口
    *
-   * @param userId 用户 ID（用于获取人格）
-   * @param userMessage 用户消息
-   * @param context RAG 上下文（历史记忆，带时间戳）
-   * @returns AI 回复
+   * @param userId           用户 ID（用于获取人格）
+   * @param userMessage      用户消息
+   * @param context          长期记忆 RAG 上下文
+   * @param sessionMessages  会话级 working memory（最近几轮对话）
    */
-  async chat(userId: string, userMessage: string, context: Array<{ content: string; createdAt: number }>): Promise<string> {
+  async chat(
+    userId: string,
+    userMessage: string,
+    context: Array<{ content: string; createdAt: number }>,
+    sessionMessages?: WorkingMemoryMessage[]
+  ): Promise<string> {
     try {
-      // 获取用户人格
       let persona = await personaService.getUserPersona(userId);
-
-      // 如果用户没有人格，使用默认人格
       if (!persona) {
         persona = personaService.getDefaultPersona(userId);
       }
 
-      // 构建人格化系统提示
       const systemPrompt = this.buildPersonaPrompt(persona, context);
+
+      // 构建消息列表：系统提示 + 历史会话（working memory）+ 当前消息
+      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+        { role: 'system', content: systemPrompt },
+      ];
+
+      // 注入会话历史（working memory），让 LLM 感知多轮上下文
+      if (sessionMessages && sessionMessages.length > 0) {
+        for (const msg of sessionMessages) {
+          messages.push({ role: msg.role, content: msg.content });
+        }
+      }
+
+      messages.push({ role: 'user', content: userMessage });
 
       const response = await this.openai.chat.completions.create({
         model: this.model,
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt,
-          },
-          {
-            role: 'user',
-            content: userMessage,
-          },
-        ],
+        messages,
         max_tokens: 4096,
       });
 
@@ -71,18 +88,137 @@ export class LLMService {
   }
 
   /**
-   * 判断对话信息是否值得存储为长期记忆
+   * 【核心优化】记忆处理 Pipeline — 单次 LLM 调用完成所有记忆决策
    *
-   * @param userMessage 用户消息
-   * @param assistantReply AI 回复
-   * @returns 是否重要，以及摘要和原因
+   * 替代原来的两步流程（evaluateMemoryImportance + evaluateMemoryUpdate），
+   * 一次性完成：
+   * 1. 从对话中提取所有重要事实（支持多条）
+   * 2. 为每条事实分配认知分类（semantic/episodic/procedural/todo）
+   * 3. 与已有相似记忆对比，决定 create/update/merge/skip
+   *
+   * 性能收益：
+   * - LLM 调用次数：2次 → 1次（节省约 50% 延迟）
+   * - 嵌入计算：复用 RAG 阶段已生成的向量（命中缓存）
+   */
+  async processMemoryPipeline(
+    userMessage: string,
+    assistantReply: string,
+    existingMemories: SimilarMemoryContext[]
+  ): Promise<MemoryPipelineResult> {
+    const timeContext = getRichTimeContext();
+
+    const existingMemoriesText = existingMemories.length > 0
+      ? existingMemories.map((m, i) =>
+          `[${i + 1}] ID: ${m.id}\n内容: ${m.content}\n相似度: ${(1 - m.score / 2).toFixed(2)}`
+        ).join('\n\n')
+      : '（无相似记忆）';
+
+    const prompt = `你是一个精准的记忆提取助手，负责从对话中提取值得长期存储的事实。
+
+## 当前时间
+${timeContext.formattedContext}
+
+## 对话内容
+用户: ${userMessage}
+助手: ${assistantReply}
+
+## 潜在相关的已有记忆
+${existingMemoriesText}
+
+## 记忆认知分类
+- semantic:   关于用户的稳定事实（偏好、技能、背景、价值观）
+- episodic:   具体发生过的事件（会议、经历、决策）
+- procedural: 行为习惯与模式（做事方式）
+- todo:       待办事项、提醒、截止日期
+
+## 重要性评分标准（1-10）
+- 9-10: 核心身份信息（姓名、职业、重大人生事件、深层价值观）
+- 7-8:  重要偏好、关键决策、持续有效的承诺
+- 5-6:  一般背景信息、日常待办、普通经历
+- 3-4:  补充细节、一次性信息
+- 1-2:  几乎无长期价值的琐碎内容
+
+## 存储动作规则
+对每条提取的事实，选择一个动作：
+- create: 新信息，已有记忆中不存在
+- update: 补充或修正某条已有记忆（需指定 targetMemoryId）
+- merge:  将多条相关记忆合并为一条（需指定 targetMemoryIds 数组）
+- skip:   信息已被覆盖，或不值得存储
+
+## 时间规则
+- 使用绝对日期，不用"明天""下周"等相对时间
+- 今天: ${timeContext.currentDate}，明天: ${timeContext.tomorrow}，下周一: ${timeContext.nextMonday}
+- todo 类型需设置 expiresAt（截止日期的毫秒时间戳）
+- 其他类型 expiresAt 设为 0（永不过期）
+
+## 输出要求
+只返回合法 JSON，格式如下：
+{
+  "facts": [
+    {
+      "content": "简洁的事实摘要",
+      "category": "semantic|episodic|procedural|todo",
+      "importanceScore": 1到10的整数,
+      "expiresAt": 0,
+      "action": "create|update|merge|skip",
+      "targetMemoryId": null,
+      "targetMemoryIds": null,
+      "actionContent": "实际存入的内容（如与 content 不同，例如 update/merge 后的合并内容）"
+    }
+  ]
+}
+
+如果没有值得存储的信息，返回 {"facts": []}。
+只返回 JSON，不包含任何其他内容。`;
+
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 2048,
+        response_format: { type: 'json_object' },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new LLMError('记忆 Pipeline 返回格式异常');
+      }
+
+      const result = JSON.parse(content) as MemoryPipelineResult;
+
+      if (!Array.isArray(result.facts)) {
+        result.facts = [];
+      }
+
+      // 规范化每条 fact
+      result.facts = result.facts.map(fact => ({
+        ...fact,
+        importanceScore: Math.max(1, Math.min(10, fact.importanceScore || 5)),
+        expiresAt: fact.expiresAt ?? 0,
+        action: fact.action || 'create',
+        targetMemoryId: fact.targetMemoryId || null,
+        targetMemoryIds: fact.targetMemoryIds || null,
+        actionContent: fact.actionContent || null,
+      }));
+
+      const actionable = result.facts.filter(f => f.action !== 'skip');
+      console.log(`[LLM] Pipeline 提取 ${result.facts.length} 条事实，其中 ${actionable.length} 条需要处理`);
+
+      return result;
+    } catch (error) {
+      console.error('[LLM] 记忆 Pipeline 失败:', error);
+      return { facts: [] };
+    }
+  }
+
+  /**
+   * 判断对话信息是否值得存储为长期记忆（旧版，保留向后兼容）
    */
   async evaluateMemoryImportance(
     userMessage: string,
     assistantReply: string
   ): Promise<MemoryImportanceResult> {
     try {
-      // 获取丰富的时间上下文
       const timeContext = getRichTimeContext();
 
       const prompt = `你是一个记忆重要性判断助手。请分析以下对话，判断是否包含值得长期存储的重要信息。
@@ -118,11 +254,6 @@ ${timeContext.formattedContext}
 - 提取具体的时间点（如"下午3点"转为"15:00"）
 - expiresAt 应该是任务完成或过期的时间戳（毫秒）
 
-## 普通记忆规则
-
-- 摘要应简洁但包含必要的上下文信息
-- 如果涉及时间相关内容，同样使用绝对日期
-
 ## 重要性评分标准（importanceScore 1-10）
 
 - 9-10：核心身份信息（姓名、职业、重大人生事件、深层价值观）
@@ -136,10 +267,10 @@ ${timeContext.formattedContext}
 请以 JSON 格式返回判断结果：
 {
   "isImportant": true/false,
-  "summary": "重要信息的摘要（必须使用绝对日期，如：用户2024年3月15日周五14:00有周会，需要准备周报）",
+  "summary": "重要信息的摘要",
   "reason": "判断为重要/不重要的原因",
   "memoryType": "general" | "todo",
-  "expiresAt": 过期时间戳（毫秒，0表示永不过期，todo类型建议设置具体过期时间）,
+  "expiresAt": 过期时间戳（毫秒，0表示永不过期）,
   "importanceScore": 重要性分值（1-10的整数）
 }
 
@@ -147,12 +278,7 @@ ${timeContext.formattedContext}
 
       const response = await this.openai.chat.completions.create({
         model: this.model,
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
+        messages: [{ role: 'user', content: prompt }],
         max_tokens: 1024,
         response_format: { type: 'json_object' },
       });
@@ -162,50 +288,30 @@ ${timeContext.formattedContext}
         throw new LLMError('记忆重要性判断返回格式异常');
       }
 
-      // 解析 JSON
       const result = JSON.parse(content) as MemoryImportanceResult;
 
-      if (!result.memoryType) {
-        result.memoryType = 'general';
-      }
-      if (result.expiresAt === undefined) {
-        result.expiresAt = 0;
-      }
+      if (!result.memoryType) result.memoryType = 'general';
+      if (result.expiresAt === undefined) result.expiresAt = 0;
       if (!result.importanceScore || result.importanceScore < 1 || result.importanceScore > 10) {
         result.importanceScore = 5;
       }
 
-      console.log(`[LLM] 记忆判断: type=${result.memoryType}, score=${result.importanceScore}, summary=${result.summary?.substring(0, 50)}...`);
-
       return result;
     } catch (error) {
-      // 如果判断失败，默认不存储（fail-safe）
       console.error('记忆重要性判断失败:', error);
-      return {
-        isImportant: false,
-        reason: '判断过程出错',
-      };
+      return { isImportant: false, reason: '判断过程出错' };
     }
   }
 
   /**
-   * 判断新记忆是否需要与已有记忆合并/更新
-   *
-   * @param newSummary 新记忆摘要
-   * @param similarMemories 相似的已有记忆列表
-   * @returns 更新决策（create/update/merge）
+   * 判断新记忆是否需要与已有记忆合并/更新（旧版，保留向后兼容）
    */
   async evaluateMemoryUpdate(
     newSummary: string,
     similarMemories: SimilarMemoryContext[]
   ): Promise<MemoryUpdateDecision> {
-    // 如果没有相似记忆，直接创建
     if (similarMemories.length === 0) {
-      return {
-        action: 'create',
-        reason: '没有找到相似记忆',
-        newContent: newSummary,
-      };
+      return { action: 'create', reason: '没有找到相似记忆', newContent: newSummary };
     }
 
     const prompt = `你是一个记忆管理助手。请分析新的记忆摘要是否需要与已有的相似记忆合并或更新。
@@ -214,22 +320,7 @@ ${timeContext.formattedContext}
 ${newSummary}
 
 【已有的相似记忆】
-${similarMemories.map((m, i) => `[${i + 1}] ID: ${m.id}
-内容: ${m.content}
-相似度: ${(1 - m.score / 10).toFixed(2)}`).join('\n\n')}
-
-请判断：
-1. 新记忆与已有记忆是否属于"同一主题"？
-2. 如果是同一主题，应该：
-   - UPDATE: 更新某条记忆（如补充新信息、修正错误）
-   - MERGE: 合并多条记忆（如果信息分散在多条记忆中）
-   - CREATE: 创建新记忆（虽然主题相似但信息不同）
-
-判断标准：
-- 同一主题：讨论同一件事、同一个人、同一个偏好设置等
-- 需要UPDATE：新信息补充或修正了已有记忆
-- 需要MERGE：多条记忆讨论同一件事，但信息分散
-- 需要CREATE：主题相关但信息独立，不应合并
+${similarMemories.map((m, i) => `[${i + 1}] ID: ${m.id}\n内容: ${m.content}\n相似度: ${(1 - m.score / 10).toFixed(2)}`).join('\n\n')}
 
 请以 JSON 格式返回：
 {
@@ -253,53 +344,32 @@ ${similarMemories.map((m, i) => `[${i + 1}] ID: ${m.id}
       });
 
       const content = response.choices[0]?.message?.content;
-      if (!content) {
-        throw new LLMError('记忆更新判断返回格式异常');
-      }
+      if (!content) throw new LLMError('记忆更新判断返回格式异常');
 
-      const result = JSON.parse(content) as MemoryUpdateDecision;
-      console.log(`[LLM] 记忆更新决策: ${result.action}, 原因: ${result.reason}`);
-      return result;
+      return JSON.parse(content) as MemoryUpdateDecision;
     } catch (error) {
       console.error('[LLM] 记忆更新判断失败:', error);
-      // Fail-safe: 默认创建新记忆
-      return {
-        action: 'create',
-        reason: '判断过程出错，默认创建新记忆',
-        newContent: newSummary,
-      };
+      return { action: 'create', reason: '判断过程出错，默认创建新记忆', newContent: newSummary };
     }
   }
 
   /**
-   * 批量评估记忆的保留价值
-   *
-   * 用于记忆清理时判断哪些记忆可以删除
-   *
-   * @param memories 记忆列表（包含 id, content, createdAt）
-   * @returns 每条记忆的保留建议 { id, shouldKeep, reason }
+   * 批量评估记忆的保留价值（用于清理阶段）
    */
   async evaluateMemoryRetention(
     memories: Array<{ id: string; content: string; createdAt: number }>
   ): Promise<Array<{ id: string; shouldKeep: boolean; reason: string }>> {
-    if (memories.length === 0) {
-      return [];
-    }
+    if (memories.length === 0) return [];
 
-    // 获取当前时间上下文
     const timeContext = getRichTimeContext();
 
     const prompt = `你是一个记忆管理助手。请评估以下记忆的保留价值。
 
 ## 当前时间
-
 ${timeContext.formattedContext}
 
 ## 待评估的记忆
-
-${memories.map((m, i) => `[${i + 1}] ID: ${m.id}
-创建时间: ${new Date(m.createdAt).toLocaleString('zh-CN')}
-内容: ${m.content}`).join('\n\n')}
+${memories.map((m, i) => `[${i + 1}] ID: ${m.id}\n创建时间: ${new Date(m.createdAt).toLocaleString('zh-CN')}\n内容: ${m.content}`).join('\n\n')}
 
 ## 评估标准
 
@@ -316,17 +386,10 @@ ${memories.map((m, i) => `[${i + 1}] ID: ${m.id}
 - 琐碎的日常细节，无长期参考价值
 - 超过 30 天的 todo 类型记忆
 
-请以 JSON 数组格式返回评估结果：
-[
-  {
-    "id": "记忆ID",
-    "shouldKeep": true/false,
-    "reason": "保留/删除的原因"
-  },
-  ...
-]
+请以 JSON 格式返回评估结果：
+{"results": [{"id": "记忆ID", "shouldKeep": true/false, "reason": "原因"}]}
 
-只返回 JSON 数组，不要包含其他内容。`;
+只返回 JSON，不要包含其他内容。`;
 
     try {
       const response = await this.openai.chat.completions.create({
@@ -337,19 +400,11 @@ ${memories.map((m, i) => `[${i + 1}] ID: ${m.id}
       });
 
       const content = response.choices[0]?.message?.content;
-      if (!content) {
-        throw new LLMError('记忆评估返回格式异常');
-      }
+      if (!content) throw new LLMError('记忆评估返回格式异常');
 
-      // 解析结果
       const parsed = JSON.parse(content);
-
-      // 处理可能的包装格式
       const results = Array.isArray(parsed) ? parsed : (parsed.results || parsed.memories || []);
 
-      console.log(`[LLM] 评估了 ${results.length} 条记忆的保留价值`);
-
-      // 确保返回格式正确
       return results.map((r: any) => ({
         id: r.id,
         shouldKeep: r.shouldKeep ?? true,
@@ -357,33 +412,19 @@ ${memories.map((m, i) => `[${i + 1}] ID: ${m.id}
       }));
     } catch (error) {
       console.error('[LLM] 记忆评估失败:', error);
-      // Fail-safe: 保留所有记忆
-      return memories.map(m => ({
-        id: m.id,
-        shouldKeep: true,
-        reason: '评估失败，默认保留',
-      }));
+      return memories.map(m => ({ id: m.id, shouldKeep: true, reason: '评估失败，默认保留' }));
     }
   }
 
   /**
    * 对一组语义相近的记忆簇进行压缩，生成统一摘要
-   *
-   * @param memories 同一簇中的记忆列表
-   * @returns 压缩后的摘要文本和建议的重要性分值
    */
   async compressMemoryCluster(
     memories: Array<{ id: string; content: string; createdAt: number; importanceScore: number }>
   ): Promise<{ summary: string; importanceScore: number }> {
-    if (memories.length === 0) {
-      throw new LLMError('compressMemoryCluster: 记忆列表为空');
-    }
-
+    if (memories.length === 0) throw new LLMError('compressMemoryCluster: 记忆列表为空');
     if (memories.length === 1) {
-      return {
-        summary: memories[0].content,
-        importanceScore: memories[0].importanceScore,
-      };
+      return { summary: memories[0].content, importanceScore: memories[0].importanceScore };
     }
 
     const timeContext = getRichTimeContext();
@@ -396,9 +437,7 @@ ${timeContext.formattedContext}
 
 ## 待压缩的记忆（共 ${memories.length} 条）
 
-${memories.map((m, i) => `[${i + 1}] 创建时间: ${new Date(m.createdAt).toLocaleString('zh-CN')}
-重要性: ${m.importanceScore}/10
-内容: ${m.content}`).join('\n\n')}
+${memories.map((m, i) => `[${i + 1}] 创建时间: ${new Date(m.createdAt).toLocaleString('zh-CN')}\n重要性: ${m.importanceScore}/10\n内容: ${m.content}`).join('\n\n')}
 
 ## 压缩要求
 
@@ -406,13 +445,10 @@ ${memories.map((m, i) => `[${i + 1}] 创建时间: ${new Date(m.createdAt).toLoc
 2. 去除重复、矛盾或过时的部分（保留最新版本）
 3. 摘要应简洁但完整，不超过 500 字
 4. 时间信息统一使用绝对日期格式
-5. 给出压缩后记忆的重要性分值（1-10），综合考虑所有原始记忆的重要性
+5. 给出压缩后记忆的重要性分值（1-10），不低于原始最高分值 ${maxScore}
 
 请以 JSON 格式返回：
-{
-  "summary": "压缩后的记忆摘要",
-  "importanceScore": 压缩后的重要性分值（1-10整数，不低于原始记忆中最高分值 ${maxScore}）
-}
+{"summary": "压缩后的记忆摘要", "importanceScore": 分值}
 
 只返回 JSON，不要包含其他内容。`;
 
@@ -425,36 +461,25 @@ ${memories.map((m, i) => `[${i + 1}] 创建时间: ${new Date(m.createdAt).toLoc
       });
 
       const content = response.choices[0]?.message?.content;
-      if (!content) {
-        throw new LLMError('记忆压缩返回格式异常');
-      }
+      if (!content) throw new LLMError('记忆压缩返回格式异常');
 
       const result = JSON.parse(content) as { summary: string; importanceScore: number };
-
-      if (!result.summary) {
-        throw new LLMError('压缩摘要为空');
-      }
+      if (!result.summary) throw new LLMError('压缩摘要为空');
       if (!result.importanceScore || result.importanceScore < 1 || result.importanceScore > 10) {
         result.importanceScore = maxScore;
       }
 
-      console.log(`[LLM] 压缩 ${memories.length} 条记忆 → score=${result.importanceScore}, summary=${result.summary.substring(0, 60)}...`);
+      console.log(`[LLM] 压缩 ${memories.length} 条记忆 → score=${result.importanceScore}`);
       return result;
     } catch (error) {
       console.error('[LLM] 记忆压缩失败:', error);
-      // Fail-safe：拼接所有内容作为摘要
       const fallbackSummary = memories.map(m => m.content).join(' | ');
-      return {
-        summary: fallbackSummary.substring(0, 1900),
-        importanceScore: maxScore,
-      };
+      return { summary: fallbackSummary.substring(0, 1900), importanceScore: maxScore };
     }
   }
 
   /**
    * 构建人格化系统提示
-   *
-   * 使用人格模板渲染
    */
   private buildPersonaPrompt(persona: UserPersona, memories: Array<{ content: string; createdAt: number }>): string {
     return personaService.renderSystemPrompt(persona, memories);

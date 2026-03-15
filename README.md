@@ -2,16 +2,16 @@
 
 # 🧠 MemChat
 
-**Production-Ready Multi-Tenant AI Memory System**
+**Enterprise-Grade Multi-Tenant AI Memory System**
 
-A secure, scalable backend for building AI applications with persistent memory and strict user data isolation.
+A secure, high-performance backend for building AI applications with persistent memory, designed for large-scale enterprise deployments with strict multi-tenant isolation.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Express](https://img.shields.io/badge/Express-4.21-green?logo=express)](https://expressjs.com/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.4-orange?logo=milvus)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[Quick Start](#-quick-start) · [Features](#-features) · [Architecture](#-architecture) · [API Docs](#-api-endpoints)
+[Quick Start](#-quick-start) · [Features](#-features) · [Architecture](#-architecture) · [API Docs](#-api-endpoints) · [Configuration](#-configuration)
 
 </div>
 
@@ -19,22 +19,25 @@ A secure, scalable backend for building AI applications with persistent memory a
 
 ## 🎯 Why MemChat?
 
-
-Building AI apps with memory is hard. Building **multi-tenant** AI apps with memory is harder.
+Building AI apps with memory is hard. Building **enterprise-scale, multi-tenant** AI apps with memory is harder.
 
 **Common challenges:**
 
 - ❌ Data isolation between users is complex and error-prone
 - ❌ Vector databases grow indefinitely, storing irrelevant conversations
-- ❌ RAG systems need memory, but how do you manage it?
-- ❌ Security vulnerabilities from improper tenant isolation
+- ❌ RAG systems need memory, but how do you manage it at scale?
+- ❌ Single LLM round-trip for memory evaluation is too slow
+- ❌ Pure vector search misses keyword-critical memories
 
 **MemChat solves all of these out of the box:**
 
-- ✅ **Dual-layer isolation** - JWT + database-level enforcement
-- ✅ **Smart memory** - LLM evaluates what's worth remembering
-- ✅ **RAG-ready** - Semantic search over conversation history
-- ✅ **Production-grade** - TypeScript, error handling, Docker-ready
+- ✅ **Dual-layer isolation** — JWT + database partition key enforcement
+- ✅ **Cognitive memory model** — semantic / episodic / procedural / todo classification
+- ✅ **Single-call memory pipeline** — 2 LLM calls → 1, ~50% latency reduction
+- ✅ **Hybrid retrieval** — vector + keyword + time decay + importance scoring
+- ✅ **Session-aware working memory** — natural multi-turn conversation context
+- ✅ **Embedding LRU cache** — eliminate redundant inference for repeated text
+- ✅ **HNSW vector index** — million-scale performance, enterprise-ready
 
 ---
 
@@ -44,97 +47,173 @@ Building AI apps with memory is hard. Building **multi-tenant** AI apps with mem
 
 ![MemChat Demo](./image/README/demo.gif)
 
-**Your AI assistant that truly remembers**
+**Your AI assistant that truly remembers — across sessions, workspaces, and time**
 
 </div>
 
 ### ✨ Persistent Memory Across Sessions
 
-The core power of MemChat: **No matter where or when you restart a conversation, your AI assistant remembers.**
-
-**Real-world scenario:**
-
 ```
 📝 Day 1, Workspace "work":
-User: "I prefer using TypeScript for backend development"
-AI:  "Got it! I'll remember you prefer TypeScript..."
+User: "I prefer TypeScript for backend, and I work at TikTok's infra team"
+AI:   "Got it! I'll remember your stack preference and team context..."
+      → Stores: semantic memory (preference), episodic memory (team info)
 
-📝 Day 3, Workspace "work" (new session):
-User: "What language should I use for my new API project?"
-AI:  "Based on your preference for TypeScript, I'd recommend..."
-     ↑ Automatically retrieved from memory!
+📝 Day 3, new session (memory auto-retrieved):
+User: "What language should I use for my new API?"
+AI:   "Based on your TypeScript preference and TikTok infra context, consider..."
+      ↑ Long-term memory retrieved via hybrid search!
 
-📝 Day 7, Workspace "personal" (different context):
-User: "Suggest a backend stack for my side project"
-AI:  "Since you prefer TypeScript, consider Express or NestJS..."
-     ↑ Same user, different workspace, still remembers!
+📝 Same session, continuing conversation:
+User: "Also, remind me about the architecture discussion we just had"
+AI:   "Sure! Earlier you mentioned wanting to use microservices for..."
+      ↑ Working memory — no retrieval needed, context is in-session!
 ```
-
-**Key capabilities:**
-
-- 🔄 **Cross-session persistence** - Memories survive server restarts
-- 🎯 **Contextual retrieval** - Relevant memories fetched automatically via semantic search
-- 🏢 **Multi-workspace support** - Separate contexts for work, personal, projects, etc.
-- 👤 **User isolation** - Each user's memories are completely private
 
 ---
 
 ## 🚀 Features
 
+### 🧠 Cognitive Memory Architecture
+
+MemChat models memory after human cognitive science, with four distinct memory types:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   Memory Taxonomy                            │
+├──────────────┬──────────────────────────────────────────────┤
+│ semantic     │ Stable facts: preferences, skills, background │
+│ episodic     │ Events: meetings, decisions, experiences      │
+│ procedural   │ Patterns: habits, workflows, behaviors        │
+│ todo         │ Tasks: reminders, deadlines, action items     │
+└──────────────┴──────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                Memory Layer Architecture                     │
+├──────────────────────────┬──────────────────────────────────┤
+│ Working Memory (session) │ Last N turns, in-context         │
+│ Long-term Memory (Milvus)│ Persistent, RAG-retrieved        │
+└──────────────────────────┴──────────────────────────────────┘
+```
+
+### ⚡ Single-Call Memory Pipeline
+
+**Before (2 LLM calls, serial):**
+```
+embed(summary) → search → LLM: importance check → LLM: update decision
+                                    ↑ latency ~2s         ↑ latency ~1s
+```
+
+**After (1 LLM call):**
+```
+embed(userMessage) → search → LLM: extract facts + decide (all-in-one)
+  ↑ cache hit likely        ↑ latency ~1s + batch multi-fact support
+```
+
+Key benefits:
+- **~50% reduction** in memory pipeline latency
+- **Batch fact extraction** — extracts multiple facts per conversation
+- **Embedding cache hit** — RAG phase already embedded the user message
+
+### 🔍 Hybrid Retrieval with Reranking
+
+Pure vector search is not enough. MemChat uses a multi-signal scoring pipeline:
+
+```
+Retrieve topK × 3 candidates from Milvus
+              ↓
+   Multi-signal scoring:
+   ┌─────────────────────────────────────────────────────┐
+   │ vector_sim    × 0.50  (semantic similarity)         │
+   │ keyword_score × 0.20  (BM25-inspired term overlap)  │
+   │ time_decay    × 0.15  (Ebbinghaus forgetting curve) │
+   │ importance    × 0.15  (LLM-assigned importance)     │
+   └─────────────────────────────────────────────────────┘
+              ↓
+   Re-rank → return topK
+```
+
+**Time decay formula (Ebbinghaus-inspired):**
+```
+score = exp(-ln(2) × age_days / half_life_days)
+```
+Memories fade naturally over time, just like human memory.
+
+### 💬 Session-Aware Working Memory
+
+```
+POST /api/chat { sessionId: "optional-client-id", message: "..." }
+
+LLM receives:
+  [system: persona + long-term memories]
+  [user: "turn 1"]          ← working memory
+  [assistant: "turn 1"]     ← working memory
+  [user: "turn 2"]          ← working memory
+  [assistant: "turn 2"]     ← working memory
+  [user: "current message"] ← current turn
+```
+
+- **Natural multi-turn** — no need to repeat context in every message
+- **Session isolation** — each sessionId maintains independent context
+- **Auto-expiry** — sessions expire after configurable TTL (default 2 hours)
+
+### 🚀 Embedding LRU Cache
+
+```
+chat() → embed(userMessage) → cache MISS → model inference → cache SET
+                                    ↓
+processAndStoreMemory() → embed(userMessage) → cache HIT → instant return
+                                    ↓
+                           Zero redundant inference!
+```
+
+- LRU eviction with configurable max size (default 2000 entries)
+- Cache stats available via service for monitoring
+
+### 🗄️ HNSW Vector Index
+
+```
+Index: IVF_FLAT → HNSW
+       ↑ good for <100K    ↑ designed for millions
+       ↑ exact search       ↑ approximate, high recall
+       ↑ nprobe tuning      ↑ ef tuning (simpler)
+
+Params: M=16, efConstruction=200 (build quality)
+Search: ef=max(64, topK×4)       (query quality)
+```
+
 ### 🔐 Enterprise-Grade Multi-Tenancy
 
-**Two-layer isolation guarantee:**
-
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Layer 1: JWT Authentication Middleware                 │
-│  - Extracts user_id from token                          │
-│  - Rejects unauthenticated requests                     │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│  Layer 2: Milvus Partition Key Enforcement              │
-│  - user_id is Partition Key                             │
-│  - All queries filtered by user_id                      │
-│  - Impossible to access another user's data             │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  Layer 1: JWT Authentication Middleware               │
+│  - Extracts user_id from signed token                 │
+│  - Rejects all unauthenticated requests               │
+└──────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────────┐
+│  Layer 2: Milvus Partition Key Enforcement            │
+│  - user_id is Partition Key (physical data isolation) │
+│  - All queries force-filtered by user_id              │
+│  - Impossible to access another user's data           │
+└──────────────────────────────────────────────────────┘
 ```
 
-**Security guarantee:** Even if auth middleware is bypassed, data layer prevents unauthorized access.
+**Security guarantee:** Even if auth middleware is bypassed, data layer prevents cross-tenant access.
 
-### 🧠 Intelligent Memory System
+### 🗜️ Hierarchical Memory Compression
 
 ```
-User Message ──► LLM evaluates importance ──► Store if valuable
-                      │
-                      ▼
-              "User prefers dark mode"
-              "User works at TikTok"
-              "User likes Chinese food"
-                      │
-                      ▼
-              Stored in Milvus with embeddings
-                      │
-                      ▼
-              Retrieved in future conversations (RAG)
-```
+Level 0: Raw conversation chunks
+    ↓ (greedy vector clustering + LLM summarization)
+Level 1: Topic summaries
+    ↓ (same process)
+Level 2: High-level abstractions
 
-- **Automatic evaluation** - LLM decides what's worth remembering
-- **Semantic retrieval** - Find relevant memories by meaning, not keywords
-- **Workspace isolation** - Same user, different contexts (work/personal/etc.)
-
-### 🎯 Developer Experience
-
-```bash
-# 1. Start infrastructure
-docker-compose up -d
-
-# 2. Install & run
-npm install && npm run dev
-
-# 3. Open browser
-open http://localhost:3000  # Interactive testing UI included!
+Trigger: when memories reach 50% of maxMemoriesPerUser
+Cleanup: when memories reach 90% of maxMemoriesPerUser
+         → delete expired → compress → retention scoring → LLM evaluation
 ```
 
 ---
@@ -142,31 +221,36 @@ open http://localhost:3000  # Interactive testing UI included!
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                         Client / Frontend                         │
-└──────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                      Express.js Server                            │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐     │
-│  │ Auth Middleware│  │  Controllers   │  │    Routes      │     │
-│  │   (JWT Verify) │  │  (Business)    │  │   (Endpoints)  │     │
-│  └────────────────┘  └────────────────┘  └────────────────┘     │
-└──────────────────────────────────────────────────────────────────┘
-                                │
-          ┌─────────────────────┼─────────────────────┐
-          ▼                     ▼                     ▼
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│   LLM Service    │  │ Memory Service   │  │ Embedding Service│
-│  (OpenAI API)    │  │  (Memory Mgmt)   │  │  (Local Model)   │
-└──────────────────┘  └──────────────────┘  └──────────────────┘
-                                │
-                                ▼
-                    ┌──────────────────┐
-                    │     Milvus       │
-                    │  (Vector Store)  │
-                    └──────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          Client / Frontend                            │
+└──────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                       Express.js Server                               │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────┐  │
+│  │ Auth Middleware │  │   Controllers    │  │      Routes        │  │
+│  │  (JWT Verify)   │  │  (Business Logic)│  │   (Endpoints)      │  │
+│  └─────────────────┘  └──────────────────┘  └────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+                                  │
+         ┌────────────────────────┼──────────────────────┐
+         ▼                        ▼                       ▼
+┌─────────────────┐   ┌───────────────────────┐  ┌──────────────────┐
+│   LLM Service   │   │    Memory Service     │  │Embedding Service │
+│ (OpenAI compat) │   │ ┌───────────────────┐ │  │  (Local Model)   │
+│                 │   │ │  Pipeline (1-call) │ │  │  + LRU Cache     │
+│ chat() with     │   │ │  Hybrid Retrieval  │ │  └──────────────────┘
+│ working memory  │   │ │  Time Decay Score  │ │
+└─────────────────┘   │ └───────────────────┘ │
+                       └───────────────────────┘
+         ┌────────────────────────┼──────────────────────┐
+         ▼                        ▼                       ▼
+┌─────────────────┐   ┌───────────────────────┐  ┌──────────────────┐
+│ Working Memory  │   │    Milvus (HNSW)      │  │  Compression     │
+│   Service       │   │  user_memories        │  │  Service         │
+│ (session store) │   │  (Partition by user)  │  │ (cluster+LLM)    │
+└─────────────────┘   └───────────────────────┘  └──────────────────┘
 ```
 
 ---
@@ -202,7 +286,11 @@ npm run dev
 
 Visit `http://localhost:3000` for the interactive testing UI.
 
-### Environment Variables
+---
+
+## ⚙️ Configuration
+
+### Core Environment Variables
 
 ```env
 # Server
@@ -219,7 +307,55 @@ MILVUS_ADDRESS=localhost:19530
 LLM_API_KEY=your-api-key
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4
-LLM_EMBEDDING_MODEL=text-embedding-ada-002
+```
+
+### Working Memory Tuning
+
+```env
+# Max messages kept per session (user+assistant each count as 1)
+WORKING_MEMORY_MAX_MESSAGES=20
+
+# Session expiry in minutes (default: 2 hours)
+WORKING_MEMORY_TTL_MINUTES=120
+
+# Disable if not needed
+WORKING_MEMORY_ENABLED=true
+```
+
+### Embedding Cache Tuning
+
+```env
+# Max cached embeddings (LRU eviction)
+EMBEDDING_CACHE_MAX_SIZE=2000
+
+# Disable for debugging
+EMBEDDING_CACHE_ENABLED=true
+```
+
+### Hybrid Retrieval Weights
+
+```env
+# Weights must sum to ~1.0
+RETRIEVAL_VECTOR_WEIGHT=0.50      # Semantic similarity
+RETRIEVAL_KEYWORD_WEIGHT=0.20     # Keyword overlap (BM25-inspired)
+RETRIEVAL_TIME_DECAY_WEIGHT=0.15  # Recency (Ebbinghaus curve)
+RETRIEVAL_IMPORTANCE_WEIGHT=0.15  # LLM-assigned importance
+
+# Half-life for time decay (days) — memories at this age score ~0.5
+RETRIEVAL_HALF_LIFE_DAYS=90
+
+# Candidate pool multiplier (topK × this = candidates fetched for reranking)
+RETRIEVAL_CANDIDATE_MULTIPLIER=3
+```
+
+### Memory Management
+
+```env
+MAX_MEMORIES_PER_USER=1000
+MEMORY_CLEANUP_THRESHOLD=0.9    # Trigger cleanup at 90% capacity
+MEMORY_CLEANUP_TARGET=0.7       # Reduce to 70% after cleanup
+MEMORY_SIMILARITY_TOP_K=8       # Candidates for write dedup
+MEMORY_SIMILARITY_THRESHOLD=0.7 # L2 threshold for similarity
 ```
 
 ---
@@ -238,10 +374,9 @@ curl -X POST http://localhost:3000/api/auth/register \
 ```
 
 **Response:**
-
 ```json
 {
-  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "userId": "alice",
   "username": "alice",
   "token": "eyJhbGciOiJIUzI1NiIs..."
 }
@@ -271,27 +406,27 @@ curl -X POST http://localhost:3000/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "workspaceId": "work-project",
-    "message": "I prefer TypeScript for backend development"
+    "message": "I prefer TypeScript for backend development",
+    "sessionId": "optional-session-uuid"
   }'
 ```
 
 **Response:**
-
 ```json
 {
   "response": "I'll remember that you prefer TypeScript...",
   "memoriesUsed": 2,
-  "memoriesStored": 1
+  "memoriesStored": 1,
+  "sessionId": "alice:work-project"
 }
 ```
 
-**Flow:**
-
-1. Retrieves relevant memories using vector search
-2. Builds context-aware prompt
-3. Calls LLM for response
-4. Evaluates if message is worth remembering
-5. Stores valuable information in Milvus
+**Upgraded Flow:**
+1. Resolves or creates session (working memory)
+2. Retrieves long-term memories via **hybrid search** (vector + keyword + time decay)
+3. Calls LLM with **session history + long-term memories + current message**
+4. Updates working memory (sync)
+5. Async **pipeline**: single LLM call extracts facts + decides create/update/merge/skip
 
 </details>
 
@@ -306,7 +441,6 @@ curl "http://localhost:3000/api/memories?workspaceId=work-project" \
 ```
 
 **Response:**
-
 ```json
 {
   "count": 3,
@@ -314,7 +448,7 @@ curl "http://localhost:3000/api/memories?workspaceId=work-project" \
     {
       "id": "memory-uuid",
       "content": "User prefers TypeScript for backend",
-      "score": 0.85
+      "importanceScore": 8
     }
   ]
 }
@@ -348,15 +482,15 @@ curl -X DELETE http://localhost:3000/api/memories/memory-uuid \
 
 ## 🛠️ Tech Stack
 
-| Component            | Technology                   |
-| -------------------- | ---------------------------- |
-| **Runtime**    | Node.js + TypeScript         |
-| **Framework**  | Express.js                   |
-| **Vector DB**  | Milvus 2.4                   |
-| **Embeddings** | @xenova/transformers (local) |
-| **LLM**        | OpenAI API (or compatible)   |
-| **Auth**       | JWT                          |
-| **Container**  | Docker Compose               |
+| Component | Technology | Notes |
+| --------- | ---------- | ----- |
+| **Runtime** | Node.js + TypeScript | Type-safe throughout |
+| **Framework** | Express.js | REST API |
+| **Vector DB** | Milvus 2.4 | HNSW index, Partition Key isolation |
+| **Embeddings** | @xenova/transformers (local) | MiniLM-L12-v2, 384-dim, with LRU cache |
+| **LLM** | OpenAI API (or compatible) | Single-call pipeline |
+| **Auth** | JWT | Stateless, multi-tenant |
+| **Container** | Docker Compose | Milvus + etcd + MinIO |
 
 ---
 
@@ -364,39 +498,66 @@ curl -X DELETE http://localhost:3000/api/memories/memory-uuid \
 
 ```
 src/
-├── config/           # Configuration management
-├── middlewares/      # JWT authentication
+├── config/
+│   └── index.ts                    # All config with env var overrides
+├── middlewares/
+│   └── auth.middleware.ts          # JWT verification
 ├── services/
-│   ├── milvus.service.ts      # Vector DB operations
-│   ├── embedding.service.ts   # Text embeddings
-│   ├── llm.service.ts         # LLM integration
-│   └── memory.service.ts      # Memory logic
-├── controllers/      # Request handlers
-├── routes/           # API routes
-├── types/            # TypeScript definitions
-└── utils/            # Helpers
+│   ├── memory.service.ts           # Memory orchestration (pipeline + hybrid retrieval)
+│   ├── working-memory.service.ts   # Session-level short-term memory
+│   ├── milvus.service.ts           # Vector DB (HNSW, Partition Key isolation)
+│   ├── embedding.service.ts        # Embeddings + LRU cache
+│   ├── llm.service.ts              # LLM (chat with session history, pipeline)
+│   ├── chunking.service.ts         # Text chunking
+│   ├── compression.service.ts      # Cluster-based memory compression
+│   ├── memory-cleanup.service.ts   # Cleanup orchestration
+│   ├── cleanup.service.ts          # Periodic expired memory cleanup
+│   └── persona.service.ts          # AI persona management
+├── controllers/
+│   ├── chat.controller.ts          # Chat endpoint with working memory
+│   ├── memory.controller.ts        # Memory CRUD
+│   ├── auth.controller.ts
+│   └── persona.controller.ts
+├── routes/
+├── types/
+│   └── index.ts                    # Full type definitions incl. MemoryCategory
+└── utils/
 ```
 
 ---
 
 ## 🔒 Security Best Practices
 
-1. **Never trust client input** - All user_id from JWT, not request body
-2. **Defense in depth** - Auth middleware + database partition key
-3. **No plaintext secrets** - Environment variables only
-4. **Input validation** - Type checking on all endpoints
+1. **Never trust client input** — all `user_id` from JWT, never from request body
+2. **Defense in depth** — auth middleware + Milvus partition key (two independent layers)
+3. **No plaintext secrets** — environment variables only
+4. **Input validation** — TypeScript type checking on all endpoints
+5. **Tenant isolation** — even if one tenant guesses another's `workspaceId`, user_id partition key blocks all cross-tenant queries
+
+---
+
+## 📊 Performance Characteristics
+
+| Scenario | Before | After |
+|----------|--------|-------|
+| Memory pipeline LLM calls | 2 (serial) | 1 |
+| Embedding for same message | 2× inference | 1× (cache hit) |
+| Search candidates for retrieval | topK exact | topK × 3 + rerank |
+| Index type | IVF_FLAT | HNSW (million-scale) |
+| Multi-turn context | Not supported | Working memory (last N turns) |
 
 ---
 
 ## 🗺️ Roadmap
 
 - [ ] Streaming responses (SSE)
-- [ ] Memory expiration policies
+- [ ] Knowledge graph layer (entity + relation extraction)
+- [ ] Pluggable embedding model (support OpenAI, Cohere, etc.)
+- [ ] Redis-backed working memory (for multi-instance deployments)
 - [ ] Multi-modal memory (images, files)
-- [ ] Memory summarization for long conversations
-- [ ] Admin dashboard
-- [ ] Rate limiting
-- [ ] Redis caching layer
+- [ ] Admin dashboard with memory analytics
+- [ ] Rate limiting per tenant
+- [ ] Prometheus metrics endpoint
 
 ---
 
@@ -420,9 +581,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- [Milvus](https://milvus.io/) - High-performance vector database
-- [Transformers.js](https://huggingface.co/docs/transformers.js) - Local embeddings
-- [OpenAI](https://openai.com/) - LLM capabilities
+- [Milvus](https://milvus.io/) — High-performance vector database with HNSW support
+- [Transformers.js](https://huggingface.co/docs/transformers.js) — Local multilingual embeddings
+- [OpenAI](https://openai.com/) — LLM capabilities
 
 ---
 
